@@ -49,6 +49,34 @@ export default function TicketDetails() {
     return imageExtensions.some((ext) => urlWithoutQuery.endsWith(ext));
   };
 
+  // Helper function to check if URL is a video
+  const isVideoFile = (url) => {
+    if (!url) return false;
+    const videoExtensions = [
+      ".mp4",
+      ".webm",
+      ".mov",
+      ".avi",
+      ".mkv",
+      ".m4v",
+      ".ogg",
+    ];
+    const urlLower = url.toLowerCase();
+    const urlWithoutQuery = urlLower.split("?")[0];
+    return videoExtensions.some((ext) => urlWithoutQuery.endsWith(ext));
+  };
+
+  // Constants for file size limits
+  const MAX_VIDEO_SIZE = 100 * 1024 * 1024; // 100MB in bytes
+  const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB for other files
+
+  // Helper to format file size for display
+  const formatFileSize = (bytes) => {
+    if (bytes < 1024) return bytes + " B";
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(2) + " KB";
+    return (bytes / (1024 * 1024)).toFixed(2) + " MB";
+  };
+
   // Helper function to get file extension
   const getFileExtension = (url) => {
     try {
@@ -345,7 +373,7 @@ export default function TicketDetails() {
     input.click();
   };
 
-  // 📎 Custom file handler for non-image files
+  // 📎 Custom file handler for non-image, non-video files
   const fileHandler = () => {
     const input = document.createElement("input");
     input.type = "file";
@@ -357,10 +385,77 @@ export default function TicketDetails() {
       if (files.length === 0) return;
 
       for (const file of files) {
+        // Size validation
+        if (file.size > MAX_FILE_SIZE) {
+          setAlertCtx({
+            title: "File Too Large",
+            message: `"${file.name}" is ${formatFileSize(file.size)}. Maximum allowed is ${formatFileSize(MAX_FILE_SIZE)}.`,
+            type: "error",
+          });
+          continue;
+        }
+
         const publicUrl = await uploadToS3(file);
         if (!publicUrl) continue;
 
         setAttachments((prev) => [...prev, publicUrl]);
+      }
+    };
+
+    input.click();
+  };
+
+  // 🎥 Custom video handler with size validation
+  const videoHandler = () => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "video/*";
+    input.multiple = true;
+
+    input.onchange = async () => {
+      const files = Array.from(input.files);
+      if (files.length === 0) return;
+
+      for (const file of files) {
+        // Check if it's actually a video file
+        if (!file.type.startsWith("video/")) {
+          setAlertCtx({
+            title: "Invalid File Type",
+            message: `"${file.name}" is not a video file. Please select a video.`,
+            type: "error",
+          });
+          continue;
+        }
+
+        // Size validation (max 100MB for videos)
+        if (file.size > MAX_VIDEO_SIZE) {
+          setAlertCtx({
+            title: "Video Too Large",
+            message: `"${file.name}" is ${formatFileSize(file.size)}. Maximum allowed is ${formatFileSize(MAX_VIDEO_SIZE)}.`,
+            type: "error",
+          });
+          continue;
+        }
+
+        // Show uploading message for large files
+        if (file.size > 10 * 1024 * 1024) {
+          setAlertCtx({
+            title: "Uploading...",
+            message: `Uploading "${file.name}" (${formatFileSize(file.size)}). Please wait...`,
+            type: "info",
+          });
+        }
+
+        const publicUrl = await uploadToS3(file);
+        if (!publicUrl) continue;
+
+        setAttachments((prev) => [...prev, publicUrl]);
+
+        setAlertCtx({
+          title: "Success!",
+          message: `Video "${file.name}" uploaded successfully.`,
+          type: "success",
+        });
       }
     };
 
@@ -373,9 +468,12 @@ export default function TicketDetails() {
         container: [
           ["bold", "italic"],
           [{ list: "ordered" }, { list: "bullet" }],
-          ["image", "code-block"],
+          ["image", "video", "link", "code-block"],
         ],
-        handlers: { image: imageHandler },
+        handlers: {
+          image: imageHandler,
+          video: videoHandler,
+        },
       },
     }),
     [],
@@ -476,12 +574,15 @@ export default function TicketDetails() {
     );
   };
 
-  // Component to render attachments (images and files)
+  // Component to render attachments (images, videos, and files)
   const AttachmentRenderer = ({ attachments }) => {
     if (!attachments || attachments.length === 0) return null;
 
     const images = attachments.filter(isImageFile);
-    const files = attachments.filter((url) => !isImageFile(url));
+    const videos = attachments.filter(isVideoFile);
+    const files = attachments.filter(
+      (url) => !isImageFile(url) && !isVideoFile(url),
+    );
 
     return (
       <div className="space-y-4">
@@ -507,7 +608,45 @@ export default function TicketDetails() {
           </div>
         )}
 
-        {/* Render Non-Image Files */}
+        {/* Render Videos */}
+        {videos.length > 0 && (
+          <div className="space-y-3">
+            {videos.map((url, index) => (
+              <div
+                key={`video-${index}`}
+                className="rounded-lg border border-gray-200 overflow-hidden bg-black"
+              >
+                <video
+                  src={url}
+                  controls
+                  className="w-full max-h-[400px]"
+                  preload="metadata"
+                >
+                  Your browser does not support the video tag.
+                </video>
+                <div className="flex items-center justify-between p-2 bg-gray-50 border-t border-gray-200">
+                  <div className="flex items-center gap-2">
+                    <span className="text-lg">🎥</span>
+                    <span className="text-sm font-medium text-gray-700 truncate max-w-[200px]">
+                      {getFileName(url)}
+                    </span>
+                  </div>
+                  <a
+                    href={url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800"
+                  >
+                    <Download className="w-4 h-4" />
+                    Download
+                  </a>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Render Non-Image, Non-Video Files */}
         {files.length > 0 && (
           <div className="space-y-2">
             {files.map((url, index) => (
