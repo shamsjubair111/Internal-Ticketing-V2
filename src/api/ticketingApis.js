@@ -300,3 +300,17 @@ export function unassignAgent(ticket_id) {
 export function issueTicketWithoutProblematicNumber(data) {
   return execute.post(`${API_BASE_URL}/api/v1/tickets/issue-ticket/without-problematic-number`, data);
 }
+
+export function addGroupToTicket(data) {
+  return execute.post(`${API_BASE_URL}/api/v1/tickets/add-group`, data);
+}
+
+export function removeGroupFromTicket(data) {
+  return execute.delete(`${API_BASE_URL}/api/v1/tickets/remove-group`, {
+    data,
+  });
+}
+
+export function getTicketGroups(ticketId) {
+  return execute.get(`${API_BASE_URL}/api/v1/tickets/ticket-groups/${ticketId}`);
+}

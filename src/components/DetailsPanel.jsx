@@ -7,6 +7,8 @@ import {
   getAssignedAgent,
   removeFollower,
   unassignAgent,
+  getTicketGroups,
+  removeGroupFromTicket,
 } from "@/api/ticketingApis";
 import {
   forwardTicket,
@@ -25,14 +27,13 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from "@/components/ui/accordion";
-import MyModal from "../common/MyModal"; // ✅ Make sure this path is correct
+import MyModal from "../common/MyModal";
 import AddTagToTicketModal from "@/app/tickets/[id]/AddTagToTicketModal";
 import RemoveTagFromTicketModal from "@/app/tickets/[id]/RemoveTagFromTicketModal";
 import AssignAgentModal from "@/app/tickets/[id]/AssignAgentModal";
 import AddFollowersModal from "@/app/tickets/[id]/AddFollowersModal";
 import { getTicketFollowers } from "@/api/ticketingApis";
-
-// import { forwardTicket, resolveTicket } from "@/api/ticketingApis"; // ✅ Uncomment if API exists
+import AddGroupToTicketModal from "./AddGroupToTicketModal";
 
 export default function DetailsPanel({
   ticket,
@@ -59,6 +60,12 @@ export default function DetailsPanel({
   const [followersModal, setFollowersModal] = useState(false);
   const [followers, setFollowers] = useState([]);
   const [assignedAgent, setAssignedAgent] = useState(null);
+
+  // Group states
+  const [ticketGroups, setTicketGroups] = useState([]);
+  const [addGroupModal, setAddGroupModal] = useState(false);
+  const [removeGroupData, setRemoveGroupData] = useState(null);
+  const [groupsLoading, setGroupsLoading] = useState(false);
 
   const allUsers = [
     { key: "iptsp", value: "IPTSP" },
@@ -92,6 +99,56 @@ export default function DetailsPanel({
     }
   };
 
+  // Load ticket groups
+  const loadTicketGroups = async () => {
+    try {
+      setGroupsLoading(true);
+      const res = await getTicketGroups(ticket.ticket_id);
+      const groups = res?.data?.groups || [];
+      setTicketGroups(Array.isArray(groups) ? groups : []);
+    } catch (err) {
+      console.error("Failed to load ticket groups", err);
+      setTicketGroups([]);
+    } finally {
+      setGroupsLoading(false);
+    }
+  };
+
+  // Handle remove group
+  const handleRemoveGroup = async () => {
+    if (!removeGroupData) return;
+
+    try {
+      const payload = {
+        ticket_id: ticket.ticket_id,
+        group_id: removeGroupData.group_id,
+        sub_group_id: removeGroupData.sub_group_id || null,
+      };
+
+      await removeGroupFromTicket(payload);
+
+      setAlertCtx({
+        title: "Success!",
+        message: "Group removed from ticket successfully",
+        type: "success",
+      });
+
+      // Refresh groups list
+      loadTicketGroups();
+      setRemoveGroupData(null);
+      onTicketUpdated?.();
+    } catch (err) {
+      console.error("Remove group failed:", err);
+      setAlertCtx({
+        title: "Error",
+        message:
+          err.response?.data?.message ||
+          "Failed to remove group. Please try again.",
+        type: "error",
+      });
+    }
+  };
+
   useEffect(() => {
     async function loadAssignedAgent() {
       try {
@@ -109,18 +166,19 @@ export default function DetailsPanel({
     if (ticket?.ticket_id) loadFollowers();
   }, [ticket?.ticket_id]);
 
+  // Load groups when ticket changes
   useEffect(() => {
-    // If API returns null, undefined, or empty → show "Select Priority"
+    if (ticket?.ticket_id) loadTicketGroups();
+  }, [ticket?.ticket_id]);
+
+  useEffect(() => {
     if (!ticket?.priority) {
       setPriority("");
       return;
     }
-
-    // Otherwise set the actual priority (ex: "High", "Medium")
     setPriority(ticket.priority?.priority_name);
   }, [ticket]);
 
-  // ✅ Close dropdown on outside click
   useEffect(() => {
     const handleClickOutside = (event) => {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
@@ -134,7 +192,7 @@ export default function DetailsPanel({
   useEffect(() => {
     if (!ticket?.ticket_status) return;
 
-    if (!firstLoad.current) return; // ⛔ Prevent re-trigger on refresh from parent
+    if (!firstLoad.current) return;
 
     let apiStatus = ticket.ticket_status;
 
@@ -148,14 +206,14 @@ export default function DetailsPanel({
     }
 
     setStatus(formatted);
-    firstLoad.current = false; // ❗ Only run on first mount
+    firstLoad.current = false;
   }, [ticket]);
 
   useEffect(() => {
     async function fetchPriorities() {
       try {
-        const res = await getAllPriorities(); // API call
-        setPriorities(res.data.data); // store array of priorities
+        const res = await getAllPriorities();
+        setPriorities(res.data.data);
       } catch (err) {
         console.error("Failed to load priorities", err);
       }
@@ -164,7 +222,6 @@ export default function DetailsPanel({
     fetchPriorities();
   }, []);
 
-  // ✅ Forward handler
   const handleForward = async () => {
     try {
       setButtonLoader(true);
@@ -179,7 +236,7 @@ export default function DetailsPanel({
       const res = await forwardTicket(data);
 
       if (action === "r&f") {
-        await handleResolve(); // chain resolve after forward
+        await handleResolve();
       }
 
       setButtonLoader(false);
@@ -228,9 +285,8 @@ export default function DetailsPanel({
 
   const handlePriorityChange = async (newPriorityName) => {
     try {
-      setPriority(newPriorityName); // update UI instantly
+      setPriority(newPriorityName);
 
-      // Find selected priority object
       const selectedPriority = priorities.find(
         (p) => p.name === newPriorityName,
       );
@@ -244,7 +300,6 @@ export default function DetailsPanel({
         type: "success",
       });
 
-      // notify parent to refresh UI
       onTicketUpdated?.();
     } catch (err) {
       console.error("Priority update failed:", err);
@@ -268,7 +323,6 @@ export default function DetailsPanel({
         message: "Successfully resolved this ticket",
         type: "success",
       });
-      // ✅ Update parent UI immediately without refresh
       onTicketUpdated?.();
     } catch (err) {
       console.error(err);
@@ -309,7 +363,7 @@ export default function DetailsPanel({
       let apiStatus = newStatus;
 
       if (newStatus === "Solved") {
-        apiStatus = "closed"; // 🔥 convert UI → API
+        apiStatus = "closed";
       }
 
       const payload = {
@@ -333,6 +387,12 @@ export default function DetailsPanel({
         type: "error",
       });
     }
+  };
+
+  // Handle successful group addition
+  const handleGroupAdded = () => {
+    loadTicketGroups();
+    onTicketUpdated?.();
   };
 
   return (
@@ -529,6 +589,34 @@ export default function DetailsPanel({
         />
       )}
 
+      {/* Remove Group Confirmation Modal */}
+      {removeGroupData && (
+        <MyModal
+          toggle={!!removeGroupData}
+          title="Remove Group"
+          closeMethod={() => setRemoveGroupData(null)}
+          submitMethod={handleRemoveGroup}
+          body={
+            <p className="text-sm text-gray-700">
+              Are you sure you want to remove{" "}
+              <span className="font-semibold">
+                {removeGroupData.group_name}
+              </span>
+              {removeGroupData.sub_group_name && (
+                <>
+                  {" "}
+                  and its subgroup{" "}
+                  <span className="font-semibold">
+                    {removeGroupData.sub_group_name}
+                  </span>
+                </>
+              )}
+              ?
+            </p>
+          }
+        />
+      )}
+
       {/* ===== ACCORDIONS ===== */}
       <Accordion type="single" collapsible className="space-y-4">
         {/* Ticket Info */}
@@ -585,23 +673,6 @@ export default function DetailsPanel({
               )}
             </div>
 
-            {/* {userType !== "customer" &&
-              userType !== "pbx_user" &&
-              userType !== "agent" && (
-                <div>
-                  <label className="text-sm text-gray-600">Status: </label>
-                  <select
-                    value={status}
-                    onChange={(e) => handleStatusChange(e.target.value)}
-                    className="mt-1 rounded border border-gray-300 bg-white px-2 py-1 text-sm text-gray-900"
-                  >
-                    <option>Open</option>
-                    <option>In Progress</option>
-                    <option>Solved</option>
-                  </select>
-                </div>
-              )} */}
-
             {userType !== "customer" &&
               userType !== "pbx_user" &&
               userType !== "agent" && (
@@ -622,10 +693,6 @@ export default function DetailsPanel({
                   </select>
                 </div>
               )}
-            {/* <div>
-              <label className="text-sm text-gray-600">Source:</label>
-              <p className="mt-1 text-sm text-gray-900">Email</p>
-            </div> */}
           </AccordionContent>
         </AccordionItem>
 
@@ -639,7 +706,6 @@ export default function DetailsPanel({
               </AccordionTrigger>
 
               <AccordionContent className="pb-4 pt-2 space-y-3">
-                {/* 🔹 TAG LIST DISPLAY */}
                 <div className="flex flex-wrap gap-2">
                   {ticket?.tags?.length > 0 ? (
                     ticket.tags.map((tag) => (
@@ -669,7 +735,6 @@ export default function DetailsPanel({
                   )}
                 </div>
 
-                {/* 🔹 ADD TAG BUTTON */}
                 <button
                   className="text-sm text-gray-600 hover:text-gray-900"
                   onClick={() => setAddTagModal(true)}
@@ -709,27 +774,13 @@ export default function DetailsPanel({
           onSuccess={onTicketUpdated}
         />
 
-        {/* Custom Fields */}
-        {/* <AccordionItem value="custom-fields">
-          <AccordionTrigger className="py-3 text-base font-semibold text-gray-900 hover:no-underline">
-            Custom fields
-          </AccordionTrigger>
-          <AccordionContent className="pb-4 pt-2 text-center">
-            <p className="text-sm font-semibold text-gray-900">
-              No custom fields yet
-            </p>
-            <p className="mt-2 text-xs text-gray-600">
-              Create your first custom field to add more useful details to your
-              tickets.
-            </p>
-            <button
-              onClick={onOpenCustomFieldModal}
-              className="mt-3 text-sm font-semibold text-blue-600 hover:text-blue-700 cursor-pointer"
-            >
-              Create custom field
-            </button>
-          </AccordionContent>
-        </AccordionItem> */}
+        <AddGroupToTicketModal
+          isOpen={addGroupModal}
+          onClose={() => setAddGroupModal(false)}
+          ticket={ticket}
+          onSuccess={handleGroupAdded}
+          existingGroups={ticketGroups}
+        />
 
         {/* Responsibility */}
         {userType !== "customer" &&
@@ -740,26 +791,65 @@ export default function DetailsPanel({
                 Responsibility
               </AccordionTrigger>
               <AccordionContent className="pb-4 pt-2 space-y-4">
+                {/* Groups Section */}
                 <div>
                   <div className="flex items-center justify-between">
-                    <p className="text-sm font-semibold text-gray-900">Group</p>
+                    <p className="text-sm font-semibold text-gray-900">
+                      Groups
+                    </p>
+                    <button
+                      className="text-blue-600 hover:text-blue-700 font-medium text-xs cursor-pointer"
+                      onClick={() => setAddGroupModal(true)}
+                    >
+                      + Add Group
+                    </button>
                   </div>
-                  {ticket?.group_name ? (
-                    <div className="flex items-center gap-3 mt-2">
-                      <div className="flex h-8 w-8 items-center justify-center rounded bg-purple-500 text-xs font-bold text-white">
-                        {getInitials(ticket?.group_name)}
-                      </div>
-                      <div>
-                        <p className="text-sm font-medium text-gray-900">
-                          {ticket?.group_name}
-                        </p>
-                      </div>
+
+                  {groupsLoading ? (
+                    <p className="text-xs text-gray-500 mt-2">
+                      Loading groups...
+                    </p>
+                  ) : ticketGroups.length > 0 ? (
+                    <div className="mt-2 space-y-2">
+                      {ticketGroups.map((group, index) => (
+                        <div
+                          key={`${group.group_id}-${group.sub_group_id || index}`}
+                          className="flex items-center justify-between bg-gray-50 rounded-lg p-2"
+                        >
+                          <div className="flex items-center gap-3">
+                            <div className="flex h-8 w-8 items-center justify-center rounded bg-purple-500 text-xs font-bold text-white">
+                              {getInitials(group.group_name)}
+                            </div>
+                            <div>
+                              <p className="text-sm font-medium text-gray-900">
+                                {group.group_name}
+                              </p>
+                              {group.sub_group_name && (
+                                <p className="text-xs text-gray-500">
+                                  {group.sub_group_name}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                          <button
+                            style={{ cursor: "pointer" }}
+                            onClick={() => setRemoveGroupData(group)}
+                            className="text-red-500 hover:text-red-700 p-1"
+                            title="Remove group"
+                          >
+                            <X size={16} />
+                          </button>
+                        </div>
+                      ))}
                     </div>
                   ) : (
-                    <p className="text-xs text-gray-600">No group</p>
+                    <p className="text-xs text-gray-600 mt-2">
+                      No groups assigned
+                    </p>
                   )}
                 </div>
 
+                {/* Agent Section */}
                 <div>
                   <div className="flex items-center justify-between">
                     <p className="text-sm font-semibold text-gray-900">Agent</p>
@@ -801,6 +891,7 @@ export default function DetailsPanel({
                   )}
                 </div>
 
+                {/* People in Loop Section */}
                 <div>
                   <div className="space-y-2">
                     <div className="flex items-center justify-between">
@@ -844,58 +935,6 @@ export default function DetailsPanel({
               </AccordionContent>
             </AccordionItem>
           )}
-
-        {/* Requester */}
-        {/* <AccordionItem value="requester">
-          <AccordionTrigger className="py-3 text-base font-semibold text-gray-900 hover:no-underline">
-            Requester
-          </AccordionTrigger>
-          <AccordionContent className="pb-4 pt-2">
-            <div className="flex items-center gap-3 mb-2">
-              <div className="h-8 w-8 rounded-full bg-purple-500 text-white flex items-center justify-center font-semibold text-sm">
-                {ticket?.requester?.name?.charAt(0) || "R"}
-              </div>
-              <div>
-                <p className="text-sm font-medium text-gray-800">
-                  {ticket?.requester?.name || "Unknown"}
-                </p>
-                <p className="text-xs text-gray-500 flex items-center gap-1">
-                  {ticket?.requester?.email || "Not available"}{" "}
-                  <Copy size={12} />
-                </p>
-              </div>
-            </div>
-            <button className="text-sm text-blue-600 hover:underline">
-              + Add more people
-            </button>
-          </AccordionContent>
-        </AccordionItem> */}
-
-        {/* Requester’s Tickets */}
-        {/* <AccordionItem value="requester-tickets">
-          <AccordionTrigger className="py-3 text-base font-semibold text-gray-900 hover:no-underline">
-            Requester’s tickets
-          </AccordionTrigger>
-          <AccordionContent className="pb-4 pt-2 text-sm text-gray-700">
-            <div className="mb-2 flex items-center justify-between">
-              <strong>Recent tickets</strong>
-              <span className="text-blue-600 text-xs font-medium cursor-pointer">
-                Merge
-              </span>
-            </div>
-            <p className="text-xs text-gray-500">
-              No recent requester’s tickets
-            </p>
-            <div>
-              <strong>Archived tickets</strong>
-              <p className="text-xs text-gray-500">
-                Search{" "}
-                <span className="text-blue-600 cursor-pointer">Archive</span> to
-                view this requester’s archived tickets.
-              </p>
-            </div>
-          </AccordionContent>
-        </AccordionItem> */}
 
         {/* Similar Tickets */}
         <AccordionItem value="similar-tickets">
