@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { FaCirclePlus } from "react-icons/fa6";
 import { getAllTags } from "@/api/ticketingApis";
+import { useRouter, useSearchParams } from "next/navigation";
 
 import Pagination from "@/components/shared/Pagination";
 import AddTagModal from "./AddTagModal";
@@ -14,12 +15,24 @@ export default function TagsPage() {
   const [loader, setLoader] = useState(false);
   const [tags, setTags] = useState([]);
   const [totalTags, setTotalTags] = useState(0);
-  const [page, setPage] = useState(1);
   const ITEMS_PER_PAGE = 10;
 
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [editData, setEditData] = useState(null);
   const [deleteData, setDeleteData] = useState(null);
+
+  const router = useRouter();
+  const searchParams = useSearchParams();
+
+  // Get page from URL or default to 1
+  const page = parseInt(searchParams.get("page") || "1", 10);
+
+  // Update URL when page changes
+  const setPage = (newPage) => {
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("page", newPage.toString());
+    router.push(`?${params.toString()}`, { scroll: false });
+  };
 
   const getData = async (pageNo = 1) => {
     try {
@@ -67,6 +80,7 @@ export default function TagsPage() {
           <Pagination
             totalItems={totalTags}
             itemsPerPage={ITEMS_PER_PAGE}
+            currentPage={page}
             onPageChange={setPage}
             label={"tags"}
           />

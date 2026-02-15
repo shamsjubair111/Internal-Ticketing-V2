@@ -7,15 +7,27 @@ import { getUser } from "@/api/ticketingApis";
 import UserList from "@/components/user/UserList";
 import Pagination from "@/components/shared/Pagination";
 import AddUserModal from "@/components/user/AddUserModal";
+import { useRouter, useSearchParams } from "next/navigation";
 
 export default function UserInfoPage() {
   const [loader, setLoader] = useState(false);
   const [userData, setUserData] = useState([]);
   const [isAddUserModalOpen, setIsAddUserModalOpen] = useState(false);
-  const [page, setPage] = useState(1);
   const [totalUsers, setTotalUsers] = useState(0);
   const ITEMS_PER_PAGE = 10;
-  const [paginationKey, setPaginationKey] = useState(0);
+
+  const router = useRouter();
+  const searchParams = useSearchParams();
+
+  // Get page from URL or default to 1
+  const page = parseInt(searchParams.get("page") || "1", 10);
+
+  // Update URL when page changes
+  const setPage = (newPage) => {
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("page", newPage.toString());
+    router.push(`?${params.toString()}`, { scroll: false });
+  };
 
   // ✅ Fetch Users
   const getData = async (pageNo = 1) => {
@@ -42,7 +54,6 @@ export default function UserInfoPage() {
 
   const resetToFirstPage = () => {
     setPage(1);
-    setPaginationKey((prev) => prev + 1);
     getData(1);
   };
 
@@ -72,9 +83,9 @@ export default function UserInfoPage() {
         {/* {totalUsers > ITEMS_PER_PAGE && ( */}
         <div className="rounded-sm bg-white mt-2">
           <Pagination
-            key={paginationKey}
             totalItems={totalUsers}
             itemsPerPage={ITEMS_PER_PAGE}
+            currentPage={page}
             onPageChange={setPage}
             label={"users"}
           />

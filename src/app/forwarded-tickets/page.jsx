@@ -6,13 +6,25 @@ import Pagination from "@/components/shared/Pagination";
 import { getForwardedTicket } from "@/api/ticketingApis";
 import { ticketColumns } from "@/utils/tableColumns";
 import Filter from "@/components/shared/Filter";
+import { useRouter, useSearchParams } from "next/navigation";
 
 export default function ForwardedTicketsPage() {
   const [tickets, setTickets] = useState([]);
   const [totalTickets, setTotalTickets] = useState(0);
   const [loading, setLoading] = useState(false);
-  const [page, setPage] = useState(1);
   const [filters, setFilters] = useState([]);
+  const router = useRouter();
+  const searchParams = useSearchParams();
+
+  // Get page from URL or default to 1
+  const page = parseInt(searchParams.get("page") || "1", 10);
+
+  // Update URL when page changes
+  const setPage = (newPage) => {
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("page", newPage.toString());
+    router.push(`?${params.toString()}`, { scroll: false });
+  };
 
   // Fetch forwarded tickets
   const fetchForwardedTickets = async (pageNo) => {
@@ -89,6 +101,7 @@ export default function ForwardedTicketsPage() {
         <Pagination
           totalItems={totalTickets}
           itemsPerPage={10}
+          currentPage={page}
           onPageChange={setPage}
           label={"tickets"}
         />

@@ -8,17 +8,27 @@ import Table from "@/components/shared/Table";
 import { useTicketContext } from "@/context/TicketContext";
 import { ticketColumns } from "@/utils/tableColumns";
 import { Plus } from "lucide-react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 
 export default function TicketsPage() {
   const [tickets, setTickets] = useState([]);
   const [totalTickets, setTotalTickets] = useState(0);
   const [loading, setLoading] = useState(false);
-  const [page, setPage] = useState(1);
   const [filters, setFilters] = useState([]);
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { selectedItem, selectedStatus } = useTicketContext();
   const handleFilterChange = (updatedFilters) => setFilters(updatedFilters);
+
+  // Get page from URL or default to 1
+  const page = parseInt(searchParams.get("page") || "1", 10);
+
+  // Update URL when page changes
+  const setPage = (newPage) => {
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("page", newPage.toString());
+    router.push(`?${params.toString()}`, { scroll: false });
+  };
 
   // ✅ Build query params based on selected filters
   const buildFilterParams = () => {
@@ -145,6 +155,7 @@ export default function TicketsPage() {
         <Pagination
           totalItems={totalTickets}
           itemsPerPage={10}
+          currentPage={page}
           onPageChange={setPage}
           label={"tickets"}
         />

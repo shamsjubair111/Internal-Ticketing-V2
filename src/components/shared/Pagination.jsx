@@ -1,19 +1,16 @@
 "use client";
 
-import { useState } from "react";
-
 export default function Pagination({
   totalItems = 10000,
   itemsPerPage = 20,
+  currentPage = 1,
   onPageChange,
   label,
 }) {
-  const [currentPage, setCurrentPage] = useState(1);
   const totalPages = Math.ceil(totalItems / itemsPerPage);
 
   const handlePageChange = (page) => {
     if (page >= 1 && page <= totalPages) {
-      setCurrentPage(page);
       onPageChange?.(page);
     }
   };

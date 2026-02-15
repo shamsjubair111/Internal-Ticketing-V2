@@ -105,7 +105,7 @@ export default function TrashTicketDetails() {
           {/* HEADER */}
           <div className="border-b p-4 flex items-center gap-3">
             <ChevronLeft
-              onClick={() => router.push("/trash")}
+              onClick={() => router.back()}
               className="w-5 h-5 cursor-pointer hover:text-blue-600"
             />
             <span className="text-sm text-gray-700 font-medium flex-1">

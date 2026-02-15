@@ -7,15 +7,27 @@ import { getAllSubGroups } from "@/api/ticketingApis";
 import GroupList from "@/components/GroupList";
 import AddGroupModal from "@/components/AddGroupModal";
 import Pagination from "@/components/shared/Pagination";
+import { useRouter, useSearchParams } from "next/navigation";
 
 export default function GroupInfoPage() {
   const [loader, setLoader] = useState(false);
   const [groupData, setGroupData] = useState([]);
   const [isAddGroupModalOpen, setIsAddGroupModalOpen] = useState(false);
-  const [page, setPage] = useState(1);
   const [totalGroups, setTotalGroups] = useState(0);
   const ITEMS_PER_PAGE = 10;
-  const [paginationKey, setPaginationKey] = useState(0);
+
+  const router = useRouter();
+  const searchParams = useSearchParams();
+
+  // Get page from URL or default to 1
+  const page = parseInt(searchParams.get("page") || "1", 10);
+
+  // Update URL when page changes
+  const setPage = (newPage) => {
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("page", newPage.toString());
+    router.push(`?${params.toString()}`, { scroll: false });
+  };
 
   // ✅ Fetch all groups + subgroups
   const getSubgroupData = async (pageNo = 1) => {
@@ -48,7 +60,6 @@ export default function GroupInfoPage() {
 
   const resetToFirstPage = () => {
     setPage(1);
-    setPaginationKey((prev) => prev + 1); // 🔁 force re-render
     getSubgroupData(1);
   };
 
@@ -73,9 +84,9 @@ export default function GroupInfoPage() {
         {totalGroups > ITEMS_PER_PAGE && (
           <div className=" rounded-sm bg-white mt-2">
             <Pagination
-              key={paginationKey}
               totalItems={totalGroups}
               itemsPerPage={ITEMS_PER_PAGE}
+              currentPage={page}
               onPageChange={setPage}
               label={"groups"}
             />

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useContext } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { getPermanentlyDeletedTickets } from "@/api/ticketingApis";
 import Pagination from "@/components/shared/Pagination";
 import { AlertCircle, Loader2 } from "lucide-react";
@@ -11,10 +11,20 @@ export default function PermanentlyDeletedTicketsPage() {
   const [tickets, setTickets] = useState([]);
   const [totalTickets, setTotalTickets] = useState(0);
   const [loading, setLoading] = useState(false);
-  const [page, setPage] = useState(1);
 
   const { setAlertCtx } = useContext(alertContext);
   const router = useRouter();
+  const searchParams = useSearchParams();
+
+  // Get page from URL or default to 1
+  const page = parseInt(searchParams.get("page") || "1", 10);
+
+  // Update URL when page changes
+  const setPage = (newPage) => {
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("page", newPage.toString());
+    router.push(`?${params.toString()}`, { scroll: false });
+  };
 
   // -------------------- FETCH API --------------------
   const fetchDeletedTickets = async (pageNo) => {
@@ -52,6 +62,7 @@ export default function PermanentlyDeletedTicketsPage() {
         <Pagination
           totalItems={totalTickets}
           itemsPerPage={10}
+          currentPage={page}
           onPageChange={setPage}
           label={"tickets"}
         />

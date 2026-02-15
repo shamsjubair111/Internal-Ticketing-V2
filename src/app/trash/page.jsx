@@ -6,18 +6,28 @@ import Pagination from "@/components/shared/Pagination";
 import { AlertCircle, Loader2, RotateCcw, XCircle } from "lucide-react";
 import { alertContext } from "@/hooks/alertContext";
 import DeleteTrashTicketModal from "./DeleteTrashTicketModal";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import ClearTrashModal from "./ClearTrashModal";
 
 export default function TrashTicketsPage() {
   const [tickets, setTickets] = useState([]);
   const [totalTickets, setTotalTickets] = useState(0);
   const [loading, setLoading] = useState(false);
-  const [page, setPage] = useState(1);
   const [deleteData, setDeleteData] = useState(null);
   const [showClearModal, setShowClearModal] = useState(false);
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { setAlertCtx } = useContext(alertContext);
+
+  // Get page from URL or default to 1
+  const page = parseInt(searchParams.get("page") || "1", 10);
+
+  // Update URL when page changes
+  const setPage = (newPage) => {
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("page", newPage.toString());
+    router.push(`?${params.toString()}`, { scroll: false });
+  };
 
   // Fetch Trash Tickets
   const fetchTrashTickets = async (pageNo) => {
@@ -87,6 +97,7 @@ export default function TrashTicketsPage() {
         <Pagination
           totalItems={totalTickets}
           itemsPerPage={10}
+          currentPage={page}
           onPageChange={setPage}
           label={"tickets"}
         />
