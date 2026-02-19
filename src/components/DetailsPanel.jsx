@@ -638,10 +638,13 @@ export default function DetailsPanel({
               <p className="text-sm text-gray-900">
                 <span className="text-gray-600">Created:</span>{" "}
                 {ticket?.created_at
-                  ? new Date(ticket.created_at).toLocaleDateString("en-GB", {
+                  ? new Date(ticket.created_at).toLocaleString("en-GB", {
                       day: "2-digit",
                       month: "short",
                       year: "numeric",
+                      hour: "2-digit",
+                      minute: "2-digit",
+                      hour12: true, // change to false if you want 24h format
                     })
                   : "N/A"}
               </p>
