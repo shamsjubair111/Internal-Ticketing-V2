@@ -186,6 +186,7 @@ function LoginView() {
     disabled={!disable()}
     className={`w-full py-2.5 mt-2 rounded-lg font-medium text-white transition-all duration-200
       ${disable() ? "bg-blue-700 hover:bg-blue-800" : "bg-gray-400 cursor-not-allowed"}`}
+      style={{cursor: "pointer"}}
   >
     {!show ? "Get OTP" : "Login"}
   </button>
