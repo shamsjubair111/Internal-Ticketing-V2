@@ -1,215 +1,110 @@
 "use client";
-
-import { Label, TextInput, Tooltip } from "flowbite-react";
-import React, { useContext, useEffect, useState, createRef, Suspense } from "react";
-import { generateOtp, login, validateAccessToken } from "@/api/ticketingApis";
-import { alertContext } from "@/hooks/alertContext";
+import { useContext, useEffect, useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { checkPhoneFormat } from "@/common/functions";
-import ReCAPTCHA from "react-google-recaptcha";
-import { AiFillLock } from "react-icons/ai";
+import { login, validateToken, validateAccessToken, requestPassword } from "@/api/tickets";
+import { alertContext } from "@/hooks/alertContext";
+import { Eye, EyeOff } from "lucide-react";
 
 function LoginView() {
-  const [phone_number, setPhone] = useState("");
-  const [show, setShow] = useState(false);
-  const [token, setToken] = useState("");
-  const [otp, setOtp] = useState("");
-  const [otpError, setOtpError] = useState(false);
-
-  // ✅ fixed: use the correct function name from context
-  const { setAlertCtx } = useContext(alertContext);
-
   const router = useRouter();
   const searchParams = useSearchParams();
-  const recaptchaRef = createRef();
-  const jwtToken = searchParams.get("q");
+  const { setAlertCtx } = useContext(alertContext);
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [showPwd, setShowPwd] = useState(false);
+  const [buttonLoader, setButtonLoader] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [isForgotPwd, setIsForgotPwd] = useState(false);
 
-  // --- Redirect if token exists ---
   useEffect(() => {
-    if (jwtToken) {
-      validateAccessToken(jwtToken)
-        .then(() => {
-          localStorage.setItem("jwt_token", jwtToken);
-          router.push("/tickets");
-        })
-        .catch(() => { });
-    } else if (localStorage.getItem("jwt_token")) {
-      router.push("/tickets");
-    }
-  }, [jwtToken, router]);
+    const token = localStorage.getItem("auth_token");
+    if (token) validateToken().then(() => router.push("/my-tickets")).catch(() => localStorage.removeItem("auth_token"));
+  }, []);
 
-  // --- OTP + Login logic ---
-  const onSubmitWithReCAPTCHA = async () => {
-    if (!recaptchaRef.current) return;
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (window.location.host === "localhost:3000" || window.location.host === "staging-ticketing.brilliant.com.bd") return;
+    const tkey = searchParams.get("tkey"), tvalue = searchParams.get("tvalue"), origin = searchParams.get("origin"), auth_token = searchParams.get("auth_token");
+    if (!tkey && !tvalue && !origin) return;
+    if (tkey && tvalue) {
+      setIsLoading(true);
+      validateAccessToken(tkey, tvalue)
+        .then(() => { if (auth_token) { localStorage.setItem("auth_token", auth_token); validateToken().then(() => router.push("/my-tickets")).catch(() => { localStorage.removeItem("auth_token"); if (origin === "pbx") window.open("https://pbx.brilliant.com.bd/","_self"); else if (origin === "sms") window.open("https://sms.brilliant.com.bd/","_self"); }); } })
+        .catch(() => window.open("https://intercloud.com.bd/support","_self"))
+        .finally(() => setIsLoading(false));
+    } else window.open("https://intercloud.com.bd/support","_self");
+  }, []);
 
-    const captchaToken = await recaptchaRef.current.executeAsync();
-    if (!captchaToken) {
-      setAlertCtx({
-        title: "Error",
-        message: "Please complete the CAPTCHA challenge",
-        type: "error",
-      });
-      return;
-    }
+  useEffect(() => {
+    const h = (e) => { if (e.key === "Enter") { if (isForgotPwd) handleRequestPassword(); else handleLogin(); } };
+    document.addEventListener("keydown", h);
+    return () => document.removeEventListener("keydown", h);
+  }, [username, password, isForgotPwd]);
 
-    setToken(captchaToken);
-    setShow(true);
-    getOtp(captchaToken);
+  const handleLogin = () => {
+    if (!username || !password) return;
+    setButtonLoader(true);
+    login({ username, password })
+      .then((r) => { localStorage.setItem("auth_token", r.data.auth_token); setAlertCtx({ title: "Success!", message: "Successfully logged in.", type: "success" }); router.push("/my-tickets"); })
+      .catch(() => setAlertCtx({ title: "Unsuccessful!", message: "Please check your username or password.", type: "error" }))
+      .finally(() => setButtonLoader(false));
   };
 
-  const handleOnClick = () => {
-    if (show) userLogin();
-    else onSubmitWithReCAPTCHA();
+  const handleRequestPassword = () => {
+    if (!username) return;
+    setButtonLoader(true);
+    requestPassword(username)
+      .then(() => { setAlertCtx({ title: "Success!", message: "A reset email was sent.", type: "success" }); setIsForgotPwd(false); setUsername(""); })
+      .catch(() => setAlertCtx({ title: "Failed!", message: "An error occurred. Please try again.", type: "error" }))
+      .finally(() => setButtonLoader(false));
   };
 
-  const userLogin = () => {
-    login({ brilliant_number: "88" + phone_number, otp, token })
-      .then((res) => {
-        setAlertCtx({
-          title: "Success",
-          message: "Login successful!",
-          type: "success",
-        });
-        localStorage.setItem("jwt_token", res.data.auth_token);
-        router.push("/tickets");
-      })
-      .catch((err) => {
-        setOtp("");
-        setShow(false);
-        setPhone("");
-        setAlertCtx({
-          title: "Error",
-          message:
-            err?.response?.data?.message ||
-            "Sorry, something went wrong. Please try again or refresh.",
-          type: "error",
-        });
-      });
-  };
+  if (isLoading) return <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-gray-100 to-gray-200"><div className="w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" /></div>;
 
-  const getOtp = () => {
-    generateOtp({ brilliant_number: "88" + phone_number })
-      .then(() => {
-        setOtpError(false);
-        setAlertCtx({
-          title: "OTP Sent",
-          message: "An OTP has been sent to your Brilliant number.",
-          type: "success",
-        });
-      })
-      .catch((err) => {
-        setOtpError(true);
-        setOtp("");
-        setAlertCtx({
-          title: "Error",
-          message:
-            err?.response?.data?.message ||
-            "Sorry, something went wrong. Please try again or refresh.",
-          type: "error",
-        });
-      });
-  };
-
-  const disable = () => (show ? !!otp : checkPhoneFormat("88" + phone_number));
-
-  // --- UI ---
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-gray-100 to-gray-200 relative">
-      {/* Floating ReCAPTCHA (bottom-right) */}
-      <div className="fixed bottom-2 right-2 z-50">
-        <ReCAPTCHA
-          ref={recaptchaRef}
-          size="invisible"
-          badge="bottomright"
-          sitekey="6LcaZ1YsAAAAADpkzqa5SsWZZlhSaY7HqZi1iaXQ"
-        />
-      </div>
-
-      {/* Login Card */}
       <div className="w-full max-w-md bg-white rounded-2xl shadow-2xl px-8 py-10 flex flex-col items-center">
-        {/* Logo */}
-        <img
-          src="https://s3.brilliant.com.bd/ticketing-connect/output-onlinepngtools.png"
-          alt="Brilliant Connect"
-          className="h-14 mb-4"
-        />
-
-        {/* Title */}
-        <h2 className="text-2xl font-bold text-gray-800 mb-6 text-center">
-          Brilliant Connect Ticketing
-        </h2>
-
-     <form
-  className="w-full flex flex-col"
-  onSubmit={(e) => {
-    e.preventDefault(); // prevent page reload
-    handleOnClick();    // trigger OTP or login logic
-  }}
->
-  {/* Phone Field */}
-  <div className="w-full mb-4">
-    <Label htmlFor="phoneNo" value="Brilliant Number" className="text-gray-700" />
-    <TextInput
-      id="phoneNo"
-      type="text"
-      required
-      addon="+88"
-      placeholder="e.g: 09638XXXXXX"
-      value={phone_number}
-      onChange={(e) => {
-        setPhone(e.target.value);
-        setShow(false);
-      }}
-      className="mt-1"
-    />
-  </div>
-
-  {/* OTP Field */}
-  {show && (
-    <div className="w-full mb-4">
-      <Label htmlFor="otp" value="Enter OTP" className="text-gray-700" />
-      <TextInput
-        id="otp"
-        addon={<AiFillLock />}
-        required
-        placeholder="Enter your OTP"
-        value={otp}
-        onChange={(e) => setOtp(e.target.value)}
-        className="mt-1"
-      />
-    </div>
-  )}
-
-  {/* Button */}
-  <button
-    type="submit" // <-- important change here
-    disabled={!disable()}
-    className={`w-full py-2.5 mt-2 rounded-lg font-medium text-white transition-all duration-200
-      ${disable() ? "bg-blue-700 hover:bg-blue-800" : "bg-gray-400 cursor-not-allowed"}`}
-      style={{cursor: "pointer"}}
-  >
-    {!show ? "Get OTP" : "Login"}
-  </button>
-</form>
-
-
-        {/* Footer */}
-        <p className="text-xs text-gray-500 mt-8 text-center">
-          © {new Date().getFullYear()} Brilliant Connect. All rights reserved.
-        </p>
+        <img src="https://brilliant-ticket.s3.brilliant.com.bd/logo/logo.png" alt="Internal Ticketing" className="h-14 mb-4" onError={(e) => { e.target.style.display="none"; }} />
+        <h2 className="text-2xl font-bold text-gray-800 mb-6 text-center">Internal Ticketing System</h2>
+        {!isForgotPwd ? (
+          <div className="w-full flex flex-col gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Username</label>
+              <input autoFocus type="text" placeholder="Enter your username" value={username} onChange={(e) => setUsername(e.target.value.trim())} className="w-full border border-gray-300 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
+              <div className="relative">
+                <input type={showPwd ? "text" : "password"} placeholder="Enter your password" value={password} onChange={(e) => setPassword(e.target.value.trim())} className="w-full border border-gray-300 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 pr-10" />
+                <button type="button" className="absolute right-3 top-2.5 text-gray-400 hover:text-gray-600" onClick={() => setShowPwd((p) => !p)}>{showPwd ? <EyeOff size={16} /> : <Eye size={16} />}</button>
+              </div>
+            </div>
+            <p className="text-right text-sm text-blue-700 cursor-pointer hover:underline -mt-2" onClick={() => { setUsername(""); setIsForgotPwd(true); }}>Forgot Password?</p>
+            <button onClick={handleLogin} disabled={buttonLoader || !username || !password} style={{ cursor: "pointer" }} className="w-full py-2.5 rounded-lg font-medium text-white bg-blue-700 hover:bg-blue-800 disabled:bg-gray-400 disabled:cursor-not-allowed transition-all">
+              {buttonLoader ? <span className="inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> : "Login"}
+            </button>
+          </div>
+        ) : (
+          <div className="w-full flex flex-col gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Username or Email</label>
+              <input autoFocus type="text" placeholder="Enter your username or email" value={username} onChange={(e) => setUsername(e.target.value.trim())} className="w-full border border-gray-300 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+            <button onClick={handleRequestPassword} disabled={buttonLoader || !username} style={{ cursor: "pointer" }} className="w-full py-2.5 rounded-lg font-medium text-white bg-blue-700 hover:bg-blue-800 disabled:bg-gray-400 disabled:cursor-not-allowed transition-all">
+              {buttonLoader ? <span className="inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> : "Request Password Reset"}
+            </button>
+            <p className="text-center text-sm text-blue-700 cursor-pointer hover:underline" onClick={() => setIsForgotPwd(false)}>← Back to Sign In</p>
+          </div>
+        )}
+        <p className="text-xs text-gray-500 mt-8 text-center">© {new Date().getFullYear()} Internal Ticketing System. All rights reserved.</p>
       </div>
     </div>
   );
 }
 
-// Wrap in Suspense to fix useSearchParams() build error
 export default function Page() {
   return (
-    <Suspense fallback={
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-gray-100 to-gray-200">
-        <div className="text-gray-600">Loading...</div>
-      </div>
-    }>
+    <Suspense fallback={<div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-gray-100 to-gray-200"><div className="text-gray-600">Loading...</div></div>}>
       <LoginView />
     </Suspense>
   );

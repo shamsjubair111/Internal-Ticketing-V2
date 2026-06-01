@@ -1,907 +1,1070 @@
 "use client";
-
+import { useContext, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import DetailsPanel from "@/components/DetailsPanel";
-import { ChevronLeft, Edit2, FileText, Download } from "lucide-react";
 import dynamic from "next/dynamic";
-import { useEffect, useMemo, useRef, useState } from "react";
-import TurndownService from "turndown";
-import { jwtDecode } from "jwt-decode";
+import "react-quill-new/dist/quill.snow.css";
+import * as date from "date-and-time";
+import DOMPurify from "dompurify";
+import { alertContext } from "@/hooks/alertContext";
 import {
-  getTicketById,
+  ticketDetails,
+  getUserInfo,
   addComment,
+  changeStatus,
+  resolveTicket,
+  pickTicket,
+  dropTicket,
+  forwardTicket,
+  addRootCause,
+  updateTicket,
   getPresignedPost,
   postAttachmentToS3,
-  changeTicketStatus,
-} from "@/api/ticketingApis";
-import { useTicketContext } from "@/context/TicketContext";
-import { alertContext } from "@/hooks/alertContext";
-import { useContext } from "react";
-import "react-quill-new/dist/quill.snow.css";
+  emailList,
+} from "@/api/tickets";
+import ShowAttachments from "@/components/shared/ShowAttachments";
+import MyModal from "@/components/shared/MyModal";
+import { ChevronLeft, X, Paperclip } from "lucide-react";
 
 const ReactQuill = dynamic(() => import("react-quill-new"), { ssr: false });
 
-export default function TicketDetails() {
+const pattern = date.compile("MMM DD YYYY • hh:mm:ss A");
+const safe = (html) => ({ __html: DOMPurify.sanitize(html || "") });
+
+const SERVICES = [
+  { label: "Internet / Data", value: "Internet" },
+  { label: "Cloud", value: "Cloud" },
+  { label: "IP Telephony", value: "IpTelephony" },
+  { label: "SMS", value: "SMS" },
+];
+const TEAMS = [
+  { label: "Support", value: "support" },
+  { label: "Revenue", value: "revenue" },
+  { label: "Sales", value: "sales" },
+  { label: "Corporate Support", value: "corporatesupport" },
+  { label: "Core Network", value: "core" },
+  { label: "NPI", value: "npi" },
+];
+
+function InfoRow({ label, value }) {
+  return (
+    <div className="text-sm">
+      <span className="font-semibold text-gray-700">{label}: </span>
+      <span className="font-light text-gray-600">{value || "—"}</span>
+    </div>
+  );
+}
+
+function Modal({ title, onClose, children }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+      <div className="bg-white rounded-lg shadow-lg w-full max-w-md mx-4">
+        <div className="flex items-center justify-between border-b px-5 py-3">
+          <h2 className="text-lg font-semibold text-gray-800">{title}</h2>
+          <button onClick={onClose}>
+            <X size={20} className="text-gray-500" />
+          </button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+export default function TicketDetailsPage() {
   const { id } = useParams();
   const router = useRouter();
-  const [ticket, setTicket] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [message, setMessage] = useState("");
-  const [attachments, setAttachments] = useState([]);
-  const [isPrivate, setIsPrivate] = useState(false);
-  const [refresh, setRefresh] = useState(0);
-  const quillRef = useRef(null);
-  const [previewImage, setPreviewImage] = useState(null);
-  const [userType, setUserType] = useState("");
-  const [status, setStatus] = useState("Open");
-  const [statusLoading, setStatusLoading] = useState(false);
-
-  const { selectedItem } = useTicketContext();
   const { setAlertCtx } = useContext(alertContext);
 
-  // Helper function to check if URL is an image - STRICT checking
-  const isImageFile = (url) => {
-    if (!url) return false;
-    const imageExtensions = [".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"];
-    const urlLower = url.toLowerCase();
-    const urlWithoutQuery = urlLower.split("?")[0];
-    return imageExtensions.some((ext) => urlWithoutQuery.endsWith(ext));
+  const [ticket, setTicket] = useState(null);
+  const [userData, setUserData] = useState(null);
+  const [userType, setUserType] = useState("");
+  const [threads, setThreads] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  const [message, setMessage] = useState("");
+  const [isPrivate, setIsPrivate] = useState(true);
+  const [files, setFiles] = useState([]);
+  const [fileKey, setFileKey] = useState(Date.now());
+  const [commentLoading, setCommentLoading] = useState(false);
+
+  const [modal, setModal] = useState(null);
+  const [dropCause, setDropCause] = useState("");
+  const [fwdService, setFwdService] = useState("");
+  const [fwdTeam, setFwdTeam] = useState("");
+  const [fwdCause, setFwdCause] = useState("");
+  const [keepTrack, setKeepTrack] = useState(true);
+  const [rootCauseText, setRootCauseText] = useState("");
+  const [updateTitle, setUpdateTitle] = useState("");
+  const [updatePriority, setUpdatePriority] = useState("");
+  const [actionLoading, setActionLoading] = useState(false);
+
+  const fetchData = () => {
+    Promise.all([ticketDetails(id), getUserInfo()])
+      .then(([t, u]) => {
+        const td = t.data.data[0];
+        const ud = u.data.data[0];
+        setTicket(td);
+        setThreads(td.threads || []);
+        setUserData(ud);
+        setUserType(ud.user_type);
+      })
+      .catch(() =>
+        setAlertCtx({
+          title: "Error",
+          message: "Failed to load ticket.",
+          type: "error",
+        }),
+      )
+      .finally(() => setLoading(false));
   };
 
-  // Helper function to check if URL is a video
-  const isVideoFile = (url) => {
-    if (!url) return false;
-    const videoExtensions = [
-      ".mp4",
-      ".webm",
-      ".mov",
-      ".avi",
-      ".mkv",
-      ".m4v",
-      ".ogg",
-    ];
-    const urlLower = url.toLowerCase();
-    const urlWithoutQuery = urlLower.split("?")[0];
-    return videoExtensions.some((ext) => urlWithoutQuery.endsWith(ext));
-  };
-
-  // Constants for file size limits
-  const MAX_VIDEO_SIZE = 100 * 1024 * 1024; // 100MB in bytes
-  const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB for other files
-
-  // Helper to format file size for display
-  const formatFileSize = (bytes) => {
-    if (bytes < 1024) return bytes + " B";
-    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(2) + " KB";
-    return (bytes / (1024 * 1024)).toFixed(2) + " MB";
-  };
-
-  // Helper function to get file extension
-  const getFileExtension = (url) => {
-    try {
-      const urlWithoutParams = url.split("?")[0];
-      const parts = urlWithoutParams.split(".");
-      return parts.length > 1 ? parts[parts.length - 1].toLowerCase() : "";
-    } catch {
-      return "";
-    }
-  };
-
-  // Helper function to get file name from URL
-  const getFileName = (url) => {
-    try {
-      const urlWithoutParams = url.split("?")[0];
-      const parts = urlWithoutParams.split("/");
-      let fileName = decodeURIComponent(parts[parts.length - 1]);
-
-      if (fileName.length > 40) {
-        const ext = getFileExtension(url);
-        const nameWithoutExt = fileName.substring(0, fileName.lastIndexOf("."));
-        fileName =
-          nameWithoutExt.substring(0, 30) + "..." + (ext ? `.${ext}` : "");
-      }
-
-      return fileName;
-    } catch {
-      return "Download File";
-    }
-  };
-
-  // Helper function to get file icon based on extension
-  const getFileIcon = (url) => {
-    const ext = getFileExtension(url);
-
-    switch (ext) {
-      case "pdf":
-        return "📄";
-      case "doc":
-      case "docx":
-        return "📝";
-      case "xls":
-      case "xlsx":
-      case "csv":
-        return "📊";
-      case "zip":
-      case "rar":
-      case "7z":
-        return "🗜️";
-      case "txt":
-        return "📃";
-      case "ppt":
-      case "pptx":
-        return "📽️";
-      case "mp4":
-      case "avi":
-      case "mov":
-        return "🎥";
-      case "mp3":
-      case "wav":
-        return "🎵";
-      case "js":
-      case "jsx":
-      case "ts":
-      case "tsx":
-        return "💻";
-      case "json":
-      case "xml":
-        return "📋";
-      case "svg":
-        return "🎨";
-      case "crt":
-      case "key":
-      case "pem":
-        return "🔐";
-      default:
-        return "📎";
-    }
-  };
-
-  // Get file type label
-  const getFileTypeLabel = (url) => {
-    const ext = getFileExtension(url);
-    return ext ? ext.toUpperCase() : "FILE";
-  };
-
-  // Get user type from JWT
   useEffect(() => {
-    const token = localStorage.getItem("jwt_token");
-    if (!token) return;
+    fetchData();
+  }, [id]);
 
+  const handleReply = async () => {
+    const stripped = message.replace(/<[^>]+>/g, "").trim();
+    if (!stripped) return;
+    setCommentLoading(true);
+    let attachments = [];
     try {
-      const decoded = jwtDecode(token);
-      setUserType(decoded?.user_type);
-    } catch (err) {
-      console.error("Error decoding token:", err);
-    }
-  }, []);
-
-  // 🧩 Fetch ticket data + comments
-  useEffect(() => {
-    async function fetchTicket() {
-      try {
-        setLoading(true);
-        const res = await getTicketById(id);
-        const ticketData = res?.data?.data?.[0];
-        setTicket(ticketData || null);
-      } catch (err) {
-        console.error("❌ Error fetching ticket:", err);
-        setError("Failed to load ticket details");
-      } finally {
-        setLoading(false);
+      for (const f of files) {
+        const gpp = await getPresignedPost(f.name);
+        attachments.push(gpp.data.public_url);
+        const fd = new FormData();
+        const { AWSAccessKeyId, key, policy, signature } = gpp.data.data.fields;
+        fd.append("Content-Type", gpp.data.data.fields["Content-Type"]);
+        fd.append("key", key);
+        fd.append("AWSAccessKeyId", AWSAccessKeyId);
+        fd.append("policy", policy);
+        fd.append("signature", signature);
+        fd.append("file", f);
+        await postAttachmentToS3(gpp.data.data.url, fd);
       }
-    }
-    if (id) fetchTicket();
-  }, [id, refresh]);
+    } catch {}
 
-  // Sync status with ticket data
-  useEffect(() => {
-    if (!ticket?.ticket_status) return;
-
-    let apiStatus = ticket.ticket_status;
-    let formatted;
-    if (apiStatus === "closed") {
-      formatted = "Solved";
-    } else {
-      formatted = apiStatus
-        .replace("_", " ")
-        .replace(/\b\w/g, (c) => c.toUpperCase());
-    }
-    setStatus(formatted);
-  }, [ticket?.ticket_status]);
-
-  // Handle status change
-  const handleStatusChange = async (newStatus) => {
-    try {
-      setStatusLoading(true);
-      setStatus(newStatus);
-
-      let apiStatus = newStatus;
-      if (newStatus === "Solved") {
-        apiStatus = "closed";
-      }
-
-      const payload = {
-        ticket_id: id,
-        status: apiStatus.toLowerCase().split(" ").join("_"),
-      };
-
-      await changeTicketStatus(payload);
-      setRefresh(Math.random());
-
-      setAlertCtx({
-        title: "Success!",
-        message: `Status updated to ${newStatus}`,
-        type: "success",
-      });
-    } catch (err) {
-      console.error("Status update failed:", err);
-      // Revert status on error
-      if (ticket?.ticket_status) {
-        let revertStatus = ticket.ticket_status;
-        if (revertStatus === "closed") {
-          setStatus("Solved");
-        } else {
-          setStatus(
-            revertStatus
-              .replace("_", " ")
-              .replace(/\b\w/g, (c) => c.toUpperCase()),
+    addComment({
+      ticket_id: id,
+      contents: message,
+      commenter_user_type: userData.user_type,
+      commenter_id: userData.customer_id,
+      commenter_name: userData.name,
+      commenter_username: userData.username,
+      commenter_email: userData.email,
+      commenter_department: userData.department,
+      commenter_team: userData.team,
+      service_type: ticket.service_type,
+      department: ticket.department_email,
+      client_email: ticket.client_email,
+      secondary_emails: ticket.secondary_emails,
+      attachments,
+      is_internal: userType === "client" ? false : isPrivate,
+    })
+      .then(() => {
+        setMessage("");
+        setFiles([]);
+        setFileKey(Date.now());
+        fetchData();
+        if (ticket.status === "closed") {
+          changeStatus(id, "in progress").then(() =>
+            setAlertCtx({
+              title: "Status changed",
+              message: "Ticket reopened (In Progress).",
+              type: "success",
+            }),
           );
-        }
-      }
-      setAlertCtx({
-        title: "Error",
-        message: err.response?.data?.message || "Failed to update status",
-        type: "error",
-      });
-    } finally {
-      setStatusLoading(false);
-    }
-  };
-
-  // Check if editor is empty
-  const isEditorEmpty = (html) => {
-    const clean = html
-      .replace(/<p><br><\/p>/g, "")
-      .replace(/<p><\/p>/g, "")
-      .replace(/<br>/g, "")
-      .replace(/<[^>]+>/g, "")
-      .trim();
-
-    return clean.length === 0;
-  };
-
-  // 🧩 Submit comment - FIXED to avoid duplicate attachments
-  const handleSubmit = async () => {
-    try {
-      // Don't strip images from the message - keep them embedded
-      const htmlMessage = message;
-
-      // Extract image URLs from the HTML
-      const imageRegex = /<img[^>]+src="([^">]+)"/g;
-      const embeddedImages = [];
-      let match;
-      while ((match = imageRegex.exec(htmlMessage)) !== null) {
-        embeddedImages.push(match[1]);
-      }
-
-      // Get non-image attachments (files) - these are NOT embedded in the message
-      const nonImageAttachments = attachments.filter(
-        (url) => !isImageFile(url),
-      );
-
-      const turndownService = new TurndownService();
-      const markdownMessage = turndownService.turndown(htmlMessage).trim();
-
-      // Combine all unique attachments using Set to avoid duplicates
-      const allAttachments = [
-        ...new Set([...embeddedImages, ...nonImageAttachments]),
-      ];
-
-      const payload = {
-        ticket_id: id,
-        is_internal: userType === "agent" ? false : isPrivate,
-        message: markdownMessage,
-        attachments: allAttachments,
-      };
-
-      console.log("Submitting payload:", payload); // Debug log
-
-      await addComment(payload);
-
-      setMessage("");
-      setAttachments([]);
-      setRefresh(Math.random());
-    } catch (err) {
-      console.error("Error submitting comment:", err);
-      alert("Failed to submit comment. Please try again.");
-    }
-  };
-
-  const isSubmitDisabled =
-    (attachments.length > 0 && isEditorEmpty(message)) || loading;
-
-  // 🖼️ Upload file to S3 using API functions
-  const uploadToS3 = async (file) => {
-    try {
-      const presignRes = await getPresignedPost({ object_name: file.name });
-      const data = presignRes.data.data;
-      const publicUrl = presignRes.data.public_url;
-
-      const formData = new FormData();
-      Object.entries(data.fields).forEach(([key, value]) => {
-        formData.append(key, value);
-      });
-      formData.append("file", file);
-
-      await postAttachmentToS3(data.url, formData);
-
-      return publicUrl;
-    } catch (err) {
-      console.error("❌ Error uploading file:", err);
-      alert("File upload failed.");
-      return null;
-    }
-  };
-
-  // 🖼️ Custom image handler for multiple files (images only)
-  const imageHandler = () => {
-    const input = document.createElement("input");
-    input.type = "file";
-    input.accept = "image/*";
-    input.multiple = true;
-
-    input.onchange = async () => {
-      const files = Array.from(input.files);
-      if (files.length === 0) return;
-      const quill = quillRef.current.getEditor();
-
-      for (const file of files) {
-        const publicUrl = await uploadToS3(file);
-        if (!publicUrl) continue;
-
-        const range = quill.getSelection(true);
-        quill.insertEmbed(range.index, "image", publicUrl);
-        quill.insertText(range.index + 1, "\n");
-        quill.setSelection(range.index + 2);
-
-        // Add to attachments for tracking
-        setAttachments((prev) => [...prev, publicUrl]);
-      }
-    };
-
-    input.click();
-  };
-
-  // 📎 Custom file handler for non-image, non-video files
-  const fileHandler = () => {
-    const input = document.createElement("input");
-    input.type = "file";
-    input.accept = "*/*";
-    input.multiple = true;
-
-    input.onchange = async () => {
-      const files = Array.from(input.files);
-      if (files.length === 0) return;
-
-      for (const file of files) {
-        // Size validation
-        if (file.size > MAX_FILE_SIZE) {
+        } else {
           setAlertCtx({
-            title: "File Too Large",
-            message: `"${file.name}" is ${formatFileSize(file.size)}. Maximum allowed is ${formatFileSize(MAX_FILE_SIZE)}.`,
-            type: "error",
-          });
-          continue;
-        }
-
-        const publicUrl = await uploadToS3(file);
-        if (!publicUrl) continue;
-
-        setAttachments((prev) => [...prev, publicUrl]);
-      }
-    };
-
-    input.click();
-  };
-
-  // 🎥 Custom video handler with size validation
-  const videoHandler = () => {
-    const input = document.createElement("input");
-    input.type = "file";
-    input.accept = "video/*";
-    input.multiple = true;
-
-    input.onchange = async () => {
-      const files = Array.from(input.files);
-      if (files.length === 0) return;
-
-      for (const file of files) {
-        // Check if it's actually a video file
-        if (!file.type.startsWith("video/")) {
-          setAlertCtx({
-            title: "Invalid File Type",
-            message: `"${file.name}" is not a video file. Please select a video.`,
-            type: "error",
-          });
-          continue;
-        }
-
-        // Size validation (max 100MB for videos)
-        if (file.size > MAX_VIDEO_SIZE) {
-          setAlertCtx({
-            title: "Video Too Large",
-            message: `"${file.name}" is ${formatFileSize(file.size)}. Maximum allowed is ${formatFileSize(MAX_VIDEO_SIZE)}.`,
-            type: "error",
-          });
-          continue;
-        }
-
-        // Show uploading message for large files
-        if (file.size > 10 * 1024 * 1024) {
-          setAlertCtx({
-            title: "Uploading...",
-            message: `Uploading "${file.name}" (${formatFileSize(file.size)}). Please wait...`,
-            type: "info",
+            title: "Success",
+            message: "Comment added.",
+            type: "success",
           });
         }
+      })
+      .catch(() =>
+        setAlertCtx({
+          title: "Error",
+          message: "Failed to add comment.",
+          type: "error",
+        }),
+      )
+      .finally(() => setCommentLoading(false));
+  };
 
-        const publicUrl = await uploadToS3(file);
-        if (!publicUrl) continue;
-
-        setAttachments((prev) => [...prev, publicUrl]);
-
+  const handlePick = () => {
+    setActionLoading(true);
+    pickTicket(
+      ticket.ticket_id,
+      userData.user_type,
+      userData.customer_id,
+      userData.username,
+      userData.name,
+      userData.email,
+      userData.mobile,
+      ticket.service_type,
+      ticket.department_email,
+      ticket.secondary_emails,
+      ticket.client_email,
+    )
+      .then(() => {
         setAlertCtx({
           title: "Success!",
-          message: `Video "${file.name}" uploaded successfully.`,
+          message: "Ticket assigned to you.",
           type: "success",
         });
-      }
-    };
-
-    input.click();
-  };
-
-  const modules = useMemo(
-    () => ({
-      toolbar: {
-        container: [
-          ["bold", "italic"],
-          [{ list: "ordered" }, { list: "bullet" }],
-          ["image", "video", "link", "code-block"],
-        ],
-        handlers: {
-          image: imageHandler,
-          video: videoHandler,
-        },
-      },
-    }),
-    [],
-  );
-
-  // Render message with embedded images
-  const MessageRenderer = ({ message, attachments }) => {
-    if (!message) return null;
-
-    // Check if message contains markdown image syntax
-    const markdownImageRegex = /!\[([^\]]*)\]\(([^)]+)\)/g;
-    const hasMarkdownImages = markdownImageRegex.test(message);
-
-    if (!hasMarkdownImages) {
-      // Simple text message - render normally with attachments below
-      return (
-        <>
-          <p className="text-sm md:text-base text-gray-700 whitespace-pre-line break-words mb-3">
-            {message}
-          </p>
-          {attachments?.length > 0 && (
-            <div className="mt-3">
-              <AttachmentRenderer attachments={attachments} />
-            </div>
-          )}
-        </>
-      );
-    }
-
-    // Message has embedded images - parse and render inline
-    const parts = [];
-    let lastIndex = 0;
-    markdownImageRegex.lastIndex = 0; // Reset regex
-
-    message.replace(markdownImageRegex, (match, alt, url, offset) => {
-      // Add text before image
-      if (offset > lastIndex) {
-        parts.push({
-          type: "text",
-          content: message.slice(lastIndex, offset),
+        setModal(null);
+        fetchData();
+      })
+      .catch(() => {
+        setAlertCtx({
+          title: "Error",
+          message: "Failed to pick ticket.",
+          type: "error",
         });
-      }
+        setModal(null);
+      })
+      .finally(() => setActionLoading(false));
+  };
 
-      // Add image
-      parts.push({
-        type: "image",
-        url: url,
-        alt: alt,
+  const handleDrop = () => {
+    if (!dropCause.trim()) return;
+    setActionLoading(true);
+    dropTicket(
+      ticket.ticket_id,
+      dropCause,
+      userData.user_type,
+      userData.customer_id,
+      userData.username,
+      userData.name,
+      userData.email,
+      userData.mobile,
+      ticket.secondary_emails,
+      ticket.service_type,
+      ticket.department_email,
+      ticket.client_email,
+    )
+      .then(() => {
+        setAlertCtx({
+          title: "Success",
+          message: "Ticket dropped.",
+          type: "success",
+        });
+        setModal(null);
+        setDropCause("");
+        fetchData();
+      })
+      .catch(() => {
+        setAlertCtx({
+          title: "Error",
+          message: "Failed to drop ticket.",
+          type: "error",
+        });
+        setModal(null);
+      })
+      .finally(() => setActionLoading(false));
+  };
+
+  const handleForward = () => {
+    if (!fwdService || !fwdTeam || !fwdCause) return;
+    setActionLoading(true);
+    const deptEmail = emailList?.[fwdService]?.[fwdTeam] || "";
+    forwardTicket({
+      ticket_id: ticket.ticket_id,
+      previous_service_type: ticket.service_type,
+      previous_department: ticket.department,
+      previous_department_email: ticket.department_email,
+      new_service_type: fwdService,
+      new_department: fwdTeam,
+      new_department_email: deptEmail,
+      secondary_emails: ticket.secondary_emails,
+      forwarder_user_type: userData.user_type,
+      forwarder_id: userData.customer_id,
+      forwarder_username: userData.username,
+      forwarder_name: userData.name,
+      forwarder_email: userData.email,
+      forwarder_mobile: userData.mobile,
+      forward_cause: fwdCause,
+      is_in_forward_chain: keepTrack,
+      client_email: ticket.client_email,
+    })
+      .then(() => {
+        setAlertCtx({
+          title: "Success!",
+          message: "Ticket forwarded.",
+          type: "success",
+        });
+        setModal(null);
+        router.push("/my-tickets");
+      })
+      .catch(() => {
+        setAlertCtx({
+          title: "Error",
+          message: "Forwarding failed.",
+          type: "error",
+        });
+        setModal(null);
+      })
+      .finally(() => setActionLoading(false));
+  };
+
+  const handleResolve = () => {
+    setActionLoading(true);
+    resolveTicket(
+      ticket.ticket_id,
+      userData.customer_id,
+      userData.username,
+      userData.name,
+      userData.email,
+      userData.mobile,
+      userData.user_type,
+      ticket.service_type,
+      ticket.department_email,
+      ticket.client_email,
+      ticket.assignee_history?.[0]?.assignee_email || "",
+      ticket.secondary_emails,
+    )
+      .then(() => {
+        setAlertCtx({
+          title: "Resolved!",
+          message: "Ticket resolved.",
+          type: "success",
+        });
+        setModal(null);
+        fetchData();
+      })
+      .catch(() => {
+        setAlertCtx({
+          title: "Error",
+          message: "Failed to resolve.",
+          type: "error",
+        });
+        setModal(null);
+      })
+      .finally(() => setActionLoading(false));
+  };
+
+  const handleAddRootCause = () => {
+    if (!rootCauseText.trim()) return;
+    setActionLoading(true);
+    addRootCause(
+      ticket.ticket_id,
+      rootCauseText,
+      ticket.service_type,
+      ticket.department_email,
+      ticket.secondary_emails,
+      ticket.client_email,
+      ticket.assignee_history?.[0]?.assignee_email || "",
+      userData.email,
+    )
+      .then(() => {
+        setRootCauseText("");
+        // Chain directly into resolve after root cause saved
+        resolveTicket(
+          ticket.ticket_id,
+          userData.customer_id,
+          userData.username,
+          userData.name,
+          userData.email,
+          userData.mobile,
+          userData.user_type,
+          ticket.service_type,
+          ticket.department_email,
+          ticket.client_email,
+          ticket.assignee_history?.[0]?.assignee_email || "",
+          ticket.secondary_emails,
+        )
+          .then(() => {
+            setAlertCtx({
+              title: "Resolved!",
+              message: "Ticket resolved.",
+              type: "success",
+            });
+            setModal(null);
+            fetchData();
+          })
+          .catch(() => {
+            setAlertCtx({
+              title: "Error",
+              message: "Root cause saved but resolve failed.",
+              type: "error",
+            });
+            setModal(null);
+            fetchData();
+          })
+          .finally(() => setActionLoading(false));
+      })
+      .catch(() => {
+        setAlertCtx({
+          title: "Error",
+          message: "Failed to save root cause.",
+          type: "error",
+        });
+        setActionLoading(false);
       });
+  };
 
-      lastIndex = offset + match.length;
-      return match;
-    });
-
-    // Add remaining text
-    if (lastIndex < message.length) {
-      parts.push({
-        type: "text",
-        content: message.slice(lastIndex),
+  const handleUpdate = () => {
+    if (!updateTitle && !updatePriority) {
+      setAlertCtx({
+        title: "Validation",
+        message: "Provide at least title or priority.",
+        type: "error",
       });
+      return;
     }
-
-    // Get non-image attachments for rendering at the end
-    const nonImageAttachments =
-      attachments?.filter((url) => !isImageFile(url)) || [];
-
-    return (
-      <>
-        <div className="text-sm md:text-base text-gray-700 break-words mb-3">
-          {parts.map((part, index) => {
-            if (part.type === "text") {
-              return (
-                <span key={index} className="whitespace-pre-line">
-                  {part.content}
-                </span>
-              );
-            } else {
-              return (
-                <img
-                  key={index}
-                  src={part.url}
-                  alt={part.alt}
-                  onClick={() =>
-                    setPreviewImage(previewImage === part.url ? null : part.url)
-                  }
-                  className="max-w-full h-auto my-2 rounded border cursor-pointer hover:opacity-80"
-                />
-              );
-            }
-          })}
-        </div>
-        {nonImageAttachments.length > 0 && (
-          <div className="mt-3">
-            <AttachmentRenderer attachments={nonImageAttachments} />
-          </div>
-        )}
-      </>
-    );
+    setActionLoading(true);
+    updateTicket(ticket.ticket_id, updateTitle || null, updatePriority || null)
+      .then(() => {
+        setAlertCtx({
+          title: "Success",
+          message: "Ticket updated.",
+          type: "success",
+        });
+        setModal(null);
+        fetchData();
+      })
+      .catch(() =>
+        setAlertCtx({
+          title: "Error",
+          message: "Update failed.",
+          type: "error",
+        }),
+      )
+      .finally(() => setActionLoading(false));
   };
 
-  // Component to render attachments (images, videos, and files)
-  const AttachmentRenderer = ({ attachments }) => {
-    if (!attachments || attachments.length === 0) return null;
-
-    const images = attachments.filter(isImageFile);
-    const videos = attachments.filter(isVideoFile);
-    const files = attachments.filter(
-      (url) => !isImageFile(url) && !isVideoFile(url),
-    );
-
-    return (
-      <div className="space-y-4">
-        {/* Render Images */}
-        {images.length > 0 && (
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:flex md:flex-wrap gap-2 md:gap-4">
-            {images.map((url, index) => (
-              <img
-                key={`img-${index}`}
-                src={url}
-                alt={`attachment-${index}`}
-                onClick={() =>
-                  setPreviewImage(previewImage === url ? null : url)
-                }
-                className={`w-full md:w-40 h-32 md:h-40 object-cover rounded border cursor-pointer transition 
-                  ${
-                    previewImage === url
-                      ? "scale-105 ring-4 ring-blue-400"
-                      : "hover:opacity-80"
-                  }`}
-              />
-            ))}
-          </div>
-        )}
-
-        {/* Render Videos */}
-        {videos.length > 0 && (
-          <div className="space-y-3">
-            {videos.map((url, index) => (
-              <div
-                key={`video-${index}`}
-                className="rounded-lg border border-gray-200 overflow-hidden bg-black"
-              >
-                <video
-                  src={url}
-                  controls
-                  className="w-full max-h-[400px]"
-                  preload="metadata"
-                >
-                  Your browser does not support the video tag.
-                </video>
-                <div className="flex items-center justify-between p-2 bg-gray-50 border-t border-gray-200">
-                  <div className="flex items-center gap-2">
-                    <span className="text-lg">🎥</span>
-                    <span className="text-sm font-medium text-gray-700 truncate max-w-[200px]">
-                      {getFileName(url)}
-                    </span>
-                  </div>
-                  <a
-                    href={url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800"
-                  >
-                    <Download className="w-4 h-4" />
-                    Download
-                  </a>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* Render Non-Image, Non-Video Files */}
-        {files.length > 0 && (
-          <div className="space-y-2">
-            {files.map((url, index) => (
-              <a
-                key={`file-${index}`}
-                href={url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center gap-3 p-3 bg-gray-50 hover:bg-gray-100 rounded-lg border border-gray-200 transition group cursor-pointer"
-              >
-                <div className="flex-shrink-0 flex items-center justify-center w-10 h-10 rounded bg-blue-50 group-hover:bg-blue-100">
-                  <span className="text-xl">{getFileIcon(url)}</span>
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-gray-900 truncate group-hover:text-blue-600">
-                    {getFileName(url)}
-                  </p>
-                  <p className="text-xs text-gray-500">
-                    {getFileTypeLabel(url)} • Click to open in new tab
-                  </p>
-                </div>
-                <Download className="w-5 h-5 text-gray-400 group-hover:text-blue-600 flex-shrink-0" />
-              </a>
-            ))}
-          </div>
-        )}
-      </div>
-    );
-  };
-
-  // 🌀 UI states
   if (loading)
     return (
-      <div className="p-6 md:p-10 text-center text-gray-600">
-        <h2 className="text-lg md:text-xl font-semibold">Loading ticket...</h2>
+      <div className="flex items-center justify-center py-20">
+        <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
       </div>
     );
 
-  if (error)
-    return (
-      <div className="p-6 md:p-10 text-center text-red-600">
-        <h2 className="text-lg md:text-xl font-semibold">Error</h2>
-        <p className="text-sm mt-2">{error}</p>
-      </div>
-    );
+  const STATUS_COLORS = {
+    open: "text-blue-700",
+    "in progress": "text-green-700",
+    "on hold": "text-orange-600",
+    closed: "text-red-600",
+  };
+  const canComment = message.replace(/<[^>]+>/g, "").trim().length > 0;
+  const rootHistory = ticket?.root_cause_history || [];
 
-  if (!ticket)
-    return (
-      <div className="p-6 md:p-10 text-center text-gray-600">
-        <h2 className="text-lg md:text-xl font-semibold">Ticket not found</h2>
-      </div>
-    );
+  console.log("userType:", userType, "status:", ticket?.status);
 
-  // ✅ Render full page with responsive layout
   return (
-    <div className="p-3 md:p-6 min-h-screen bg-gray-50">
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 md:gap-4">
-        {/* 🎟️ Left Side - Main Content */}
-        <div className="lg:col-span-8 bg-white p-3 md:p-6 rounded-lg border border-gray-200 shadow-sm">
-          {/* Header */}
-          <div className="border-b p-3 md:p-4 flex items-center justify-between">
-            <div className="flex items-center gap-2 md:gap-3 flex-1 min-w-0">
-              <ChevronLeft
-                onClick={() => router.back()}
-                className="w-5 h-5 cursor-pointer hover:text-blue-600 flex-shrink-0"
-              />
-              <span className="text-xs md:text-sm text-gray-700 flex-1 font-medium truncate">
-                {ticket?.title}
-              </span>
-              <Edit2 className="w-4 h-4 text-gray-500 cursor-pointer flex-shrink-0" />
-            </div>
-          </div>
-
-          {/* Info */}
-          <div className="p-3 md:p-6 border-b text-xs md:text-sm text-gray-700 leading-relaxed space-y-1">
-            <p className="break-words">
-              <b>Ticket ID:</b> {ticket.ticket_id}
-            </p>
-            <p className="break-words">
-              <b>Issued To:</b> {ticket.issued_to}
-            </p>
-            <p className="break-words">
-              <b>Issued By:</b> {ticket.issuer_number}
-            </p>
-            <p className="break-words">
-              <b>Problematic Number:</b> {ticket.problematic_number}
-            </p>
-            <p className="break-words">
-              <b>Description:</b> {ticket.description}
-            </p>
-          </div>
-
-          {/* Attachments (From Ticket Details) */}
-          {ticket.attachments?.length > 0 && (
-            <div className="p-3 md:p-6 border-b bg-white">
-              <h3 className="text-base md:text-lg font-semibold mb-3">
-                Attachments
-              </h3>
-              <AttachmentRenderer attachments={ticket.attachments} />
-            </div>
+    <div className="max-w-5xl mx-auto px-4 md:px-6 py-6">
+      {/* Header */}
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => router.back()}
+            className="text-gray-500 hover:text-gray-800 transition-colors"
+          >
+            <ChevronLeft size={20} />
+          </button>
+          <h1 className="text-base md:text-lg font-bold text-gray-800">
+            Ticket Details
+          </h1>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {rootHistory.length > 0 && (
+            <button
+              onClick={() => setModal("viewroot")}
+              className="px-3 py-1.5 text-xs font-medium bg-blue-600 text-white rounded hover:bg-blue-700"
+            >
+              View Root Cause
+            </button>
           )}
-
-          {/* Comments */}
-          <div className="p-3 md:p-6">
-            <h3 className="text-base md:text-lg font-semibold mb-3">
-              Comments
-            </h3>
-
-            {ticket.comments?.length > 0 ? (
-              ticket.comments.map((comment, i) => (
-                <div
-                  key={comment.id || i}
-                  className="mb-4 border rounded-lg p-3 md:p-4 bg-gray-50"
-                >
-                  <div className="flex flex-col sm:flex-row sm:justify-between mb-2 gap-2 sm:items-center">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-medium text-gray-800 text-sm md:text-base">
-                        {comment.commenter_name || "Unknown"}
-                      </span>
-
-                      {comment.is_internal && (
-                        <span className="text-xs px-2 py-0.5 rounded bg-blue-600 text-white">
-                          Internal
-                        </span>
-                      )}
-                    </div>
-
-                    <span className="text-xs text-gray-500">
-                      {new Date(comment.created_at).toLocaleString()}
-                    </span>
-                  </div>
-
-                  <MessageRenderer
-                    message={comment.message}
-                    attachments={comment.attachments}
-                  />
-                </div>
-              ))
-            ) : (
-              <p className="text-gray-500 italic text-sm">No comments yet.</p>
+          {ticket?.status !== "closed" && userType !== "client" && (
+            <button
+              onClick={() => setModal("forward")}
+              className="px-3 py-1.5 text-xs font-medium bg-blue-600 text-white rounded hover:bg-blue-700"
+            >
+              Forward Ticket
+            </button>
+          )}
+          {ticket?.status === "closed" ? (
+            <button
+              disabled
+              className="px-3 py-1.5 text-xs font-medium bg-green-600 text-white rounded opacity-80 cursor-default"
+            >
+              Ticket Closed
+            </button>
+          ) : userType !== "client" &&
+            ticket?.status !== "open" &&
+            ticket?.status !== "on hold" ? (
+            <button
+              onClick={() => setModal("resolve")}
+              className="px-3 py-1.5 text-xs font-medium bg-blue-600 text-white rounded hover:bg-blue-700"
+            >
+              Resolve Ticket
+            </button>
+          ) : null}
+          {userType !== "client" &&
+            (ticket?.status === "open" || ticket?.status === "on hold") && (
+              <button
+                onClick={() => setModal("pick")}
+                className="px-3 py-1.5 text-xs font-medium bg-blue-600 text-white rounded hover:bg-blue-700"
+              >
+                Pick
+              </button>
             )}
-          </div>
+          {userType !== "client" && ticket?.status === "in progress" && (
+            <button
+              onClick={() => setModal("drop")}
+              className="px-3 py-1.5 text-xs font-medium bg-red-600 text-white rounded hover:bg-red-700"
+            >
+              Drop
+            </button>
+          )}
+          {(userType === "support" || userType === "manager") &&
+            ticket?.status !== "closed" && (
+              <button
+                onClick={() => {
+                  setUpdateTitle(ticket?.title || "");
+                  setUpdatePriority(ticket?.priority || "");
+                  setModal("update");
+                }}
+                className="px-3 py-1.5 text-xs font-medium bg-gray-700 text-white rounded hover:bg-gray-800"
+              >
+                Actions
+              </button>
+            )}
+        </div>
+      </div>
 
-          {/* Add Comment */}
-          <div className="border-t p-3 md:p-6 bg-white">
-            <div className="mb-4 border rounded overflow-hidden">
-              <ReactQuill
-                ref={quillRef}
-                theme="snow"
-                value={message}
-                onChange={setMessage}
-                placeholder="Write your reply..."
-                modules={modules}
-                className="bg-white"
-                style={{ height: "180px", overflowY: "auto" }}
+      {/* Ticket info */}
+      <div className="bg-white rounded-sm border border-gray-200 p-5 mb-4">
+        <div className="flex items-start justify-between gap-3 flex-wrap mb-3">
+          <div>
+            <h2 className="text-xl font-bold text-gray-800">{ticket?.title}</h2>
+            <p className="text-xs text-gray-400 mt-1">
+              {ticket?.created_at
+                ? date.format(new Date(ticket.created_at), pattern)
+                : ""}
+            </p>
+          </div>
+          <span
+            className={`text-sm font-semibold ${STATUS_COLORS[ticket?.status] || "text-gray-600"}`}
+          >
+            {ticket?.status?.toUpperCase()}
+          </span>
+        </div>
+        <hr className="mb-3" />
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-4">
+          <InfoRow label="Ticket ID" value={ticket?.ticket_id} />
+          <InfoRow label="Client" value={ticket?.client_name} />
+          {ticket?.client_company && (
+            <InfoRow label="Company" value={ticket.client_company} />
+          )}
+          <InfoRow label="Client Email" value={ticket?.client_email} />
+          <InfoRow label="Client Mobile" value={ticket?.client_mobile} />
+          <InfoRow
+            label="DID Number"
+            value={ticket?.did_number || "Not provided"}
+          />
+          <InfoRow
+            label="Issued By"
+            value={
+              ticket?.issuer_name
+                ? `${ticket.issuer_name} (${ticket.issuer_user_type?.toUpperCase()})`
+                : ""
+            }
+          />
+          <InfoRow label="Issuer Email" value={ticket?.issuer_email} />
+          <InfoRow
+            label="Service"
+            value={
+              ticket?.service_type === "internet"
+                ? "INTERNET / DATA"
+                : ticket?.service_type?.toUpperCase()
+            }
+          />
+          <InfoRow label="Team" value={ticket?.department?.toUpperCase()} />
+          <InfoRow label="Priority" value={ticket?.priority?.toUpperCase()} />
+          {userType !== "client" && ticket?.is_assigned && (
+            <InfoRow
+              label="Picked By"
+              value={ticket?.assignee_history?.[0]?.assignee_name}
+            />
+          )}
+          {userType !== "client" && ticket?.forwarder_history?.length > 0 && (
+            <InfoRow
+              label="Forward Cause"
+              value={ticket.forwarder_history[0].forward_cause}
+            />
+          )}
+          {ticket?.on_hold_cause && userType !== "client" && (
+            <InfoRow label="Drop Cause" value={ticket.on_hold_cause} />
+          )}
+          {ticket?.status === "closed" && (
+            <>
+              <InfoRow
+                label="Resolved By"
+                value={ticket?.resolver_history?.[0]?.resolver_name}
+              />
+              <InfoRow
+                label="Resolved At"
+                value={
+                  ticket?.resolver_history?.[0]?.resolved_at
+                    ? date.format(
+                        new Date(ticket.resolver_history[0].resolved_at),
+                        pattern,
+                      )
+                    : ""
+                }
+              />
+            </>
+          )}
+        </div>
+        <hr className="mb-3" />
+        {ticket?.attachments?.length > 0 && (
+          <ShowAttachments attachments={ticket.attachments} />
+        )}
+        <div
+          className="prose prose-sm max-w-none text-sm"
+          dangerouslySetInnerHTML={safe(ticket?.description)}
+        />
+      </div>
+
+      {/* Reply */}
+      <div className="bg-white rounded-sm border border-gray-200 p-5 mb-4">
+        <h3 className="text-sm font-semibold text-gray-700 mb-3">Add Reply</h3>
+        <div className="mb-14 border border-gray-200 rounded overflow-hidden">
+          <ReactQuill
+            theme="snow"
+            value={message}
+            onChange={setMessage}
+            placeholder="Type here..."
+            className="bg-white"
+            style={{ height: "180px", overflowY: "auto" }}
+            modules={{
+              toolbar: [
+                ["bold", "italic", "underline"],
+                ["blockquote"],
+                [{ list: "ordered" }, { list: "bullet" }],
+                ["clean"],
+              ],
+            }}
+          />
+        </div>
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          {userType !== "client" && (
+            <label className="flex items-center gap-2 text-sm cursor-pointer">
+              <input
+                type="checkbox"
+                checked={isPrivate}
+                onChange={(e) => setIsPrivate(e.target.checked)}
+                className="accent-blue-600"
+              />
+              <span
+                className={
+                  isPrivate ? "text-blue-700 font-medium" : "text-orange-600"
+                }
+              >
+                {isPrivate ? "Internal Comment" : "External Comment"}
+              </span>
+            </label>
+          )}
+          <div className="flex items-center gap-3 ml-auto">
+            <label className="flex items-center gap-1.5 px-3 py-1.5 text-sm border border-gray-300 rounded cursor-pointer hover:bg-gray-50 transition-colors text-gray-600">
+              <Paperclip className="w-4 h-4" />
+              {files.length > 0
+                ? `${files.length} file${files.length > 1 ? "s" : ""} attached`
+                : "Attach"}
+              <input
+                type="file"
+                multiple
+                key={fileKey}
+                accept="image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.zip,.csv"
+                onChange={(e) => setFiles(Array.from(e.target.files))}
+                className="hidden"
+              />
+            </label>
+            {files.length > 0 && (
+              <button
+                onClick={() => {
+                  setFiles([]);
+                  setFileKey(Date.now());
+                }}
+                className="text-xs text-red-500 hover:text-red-700"
+              >
+                Clear
+              </button>
+            )}
+            <button
+              onClick={handleReply}
+              disabled={!canComment || commentLoading}
+              style={{ cursor: "pointer" }}
+              className="px-5 py-2 text-sm font-semibold text-white bg-blue-600 rounded hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
+            >
+              {commentLoading ? "Sending..." : "Reply"}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Threads */}
+      {threads.map(
+        (t, i) =>
+          !(userType === "client" && t.is_internal) && (
+            <div
+              key={i}
+              className={`rounded-sm border border-gray-200 p-4 mb-3 ${t.commenter_user_type === "client" ? "bg-teal-50" : "bg-white"}`}
+            >
+              <div className="flex items-center gap-2 mb-1">
+                <span className="font-semibold text-sm text-gray-800">
+                  {t.commenter_name}
+                </span>
+                {t.is_internal && (
+                  <span className="px-2 py-0.5 bg-red-400 text-white text-xs rounded-full">
+                    Internal
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-gray-400 mb-2">
+                {date.format(new Date(t.created_at), pattern)}
+              </p>
+              <hr className="mb-2" />
+              {t.attachments?.length > 0 && (
+                <ShowAttachments attachments={t.attachments} />
+              )}
+              <div
+                className="prose prose-sm max-w-none text-sm"
+                dangerouslySetInnerHTML={safe(t.contents)}
               />
             </div>
+          ),
+      )}
 
-            {/* Show attached non-image files preview */}
-            {attachments.filter((url) => !isImageFile(url)).length > 0 && (
-              <div className="mb-4 space-y-2">
-                <p className="text-xs text-gray-600 font-medium">
-                  Attached files (
-                  {attachments.filter((url) => !isImageFile(url)).length}):
+      {/* Modals */}
+      {modal === "pick" && (
+        <MyModal
+          toggle
+          title="Pick Ticket"
+          body={
+            <p className="text-sm text-gray-700">
+              Assign this ticket to yourself?
+            </p>
+          }
+          closeMethod={() => setModal(null)}
+          submitMethod={handlePick}
+          submitLabel={actionLoading ? "Picking..." : "Yes, Pick"}
+        />
+      )}
+
+      {modal === "drop" && (
+        <Modal title="Add Drop Cause" onClose={() => setModal(null)}>
+          <div className="px-5 py-4">
+            <textarea
+              value={dropCause}
+              onChange={(e) => setDropCause(e.target.value.trimStart())}
+              placeholder="Enter drop cause..."
+              rows={4}
+              className="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
+            />
+          </div>
+          <div className="flex justify-end gap-3 border-t px-5 py-3">
+            <button
+              onClick={() => setModal(null)}
+              className="px-4 py-2 text-sm text-gray-600 bg-gray-100 rounded hover:bg-gray-200"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleDrop}
+              disabled={!dropCause.trim() || actionLoading}
+              className="px-4 py-2 text-sm font-semibold text-white bg-red-600 rounded hover:bg-red-700 disabled:opacity-50"
+            >
+              {actionLoading ? "Dropping..." : "Submit"}
+            </button>
+          </div>
+        </Modal>
+      )}
+
+      {modal === "forward" && (
+        <Modal title="Forward Ticket" onClose={() => setModal(null)}>
+          <div className="px-5 py-4 flex flex-col gap-3">
+            <p className="text-xs text-red-500">(*) fields are required</p>
+            <select
+              value={fwdService}
+              onChange={(e) => setFwdService(e.target.value)}
+              className="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none"
+            >
+              <option value="">Select Service *</option>
+              {SERVICES.map((s) => (
+                <option key={s.value} value={s.value}>
+                  {s.label}
+                </option>
+              ))}
+            </select>
+            <select
+              value={fwdTeam}
+              onChange={(e) => setFwdTeam(e.target.value)}
+              className="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none"
+            >
+              <option value="">Select Team *</option>
+              {TEAMS.map((t) => (
+                <option key={t.value} value={t.value}>
+                  {t.label}
+                </option>
+              ))}
+            </select>
+            <textarea
+              value={fwdCause}
+              onChange={(e) => setFwdCause(e.target.value.trimStart())}
+              placeholder="Forward cause *"
+              rows={3}
+              className="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none"
+            />
+            <label className="flex items-center gap-2 text-sm cursor-pointer">
+              <input
+                type="checkbox"
+                checked={keepTrack}
+                onChange={(e) => setKeepTrack(e.target.checked)}
+                className="accent-blue-600"
+              />
+              {keepTrack ? "Stay in loop" : "Stay out of the loop"}
+            </label>
+          </div>
+          <div className="flex justify-end gap-3 border-t px-5 py-3">
+            <button
+              onClick={() => setModal(null)}
+              className="px-4 py-2 text-sm text-white bg-red-600 rounded hover:bg-red-700"
+            >
+              Close
+            </button>
+            <button
+              onClick={handleForward}
+              disabled={!fwdService || !fwdTeam || !fwdCause || actionLoading}
+              className="px-4 py-2 text-sm font-semibold text-white bg-blue-600 rounded hover:bg-blue-700 disabled:opacity-50"
+            >
+              {actionLoading ? "Forwarding..." : "Submit"}
+            </button>
+          </div>
+        </Modal>
+      )}
+
+      {modal === "resolve" &&
+        (rootHistory.length === 0 ? (
+          <Modal title="Root Cause Summary" onClose={() => setModal(null)}>
+            <div className="px-5 py-4">
+              <textarea
+                value={rootCauseText}
+                onChange={(e) => setRootCauseText(e.target.value.trimStart())}
+                placeholder="Enter root cause summary..."
+                rows={4}
+                maxLength={100}
+                className="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none"
+              />
+              <p className="text-xs text-gray-400 mt-1">
+                {rootCauseText.length}/100
+              </p>
+            </div>
+            <div className="flex justify-end gap-3 border-t px-5 py-3">
+              <button
+                onClick={() => setModal(null)}
+                className="px-4 py-2 text-sm text-white bg-red-600 rounded"
+              >
+                Close
+              </button>
+              <button
+                onClick={handleAddRootCause}
+                disabled={!rootCauseText.trim() || actionLoading}
+                className="px-4 py-2 text-sm font-semibold text-white bg-blue-600 rounded disabled:opacity-50"
+              >
+                {actionLoading ? "Saving..." : "Submit & Resolve"}
+              </button>
+            </div>
+          </Modal>
+        ) : (
+          <MyModal
+            toggle
+            title="Resolve Ticket"
+            body={
+              <p className="text-sm text-gray-700">
+                Are you sure you want to resolve this ticket?
+              </p>
+            }
+            closeMethod={() => setModal(null)}
+            submitMethod={handleResolve}
+            submitLabel={actionLoading ? "Resolving..." : "Resolve"}
+          />
+        ))}
+
+      {modal === "viewroot" && (
+        <Modal title="Root Cause History" onClose={() => setModal(null)}>
+          <div className="px-5 py-4 max-h-72 overflow-y-auto flex flex-col gap-3">
+            {rootHistory.map((r, i) => (
+              <div
+                key={i}
+                className="border border-gray-200 rounded p-3 shadow-sm"
+              >
+                <p className="text-xs font-semibold text-gray-500 mb-1">
+                  {date.format(new Date(r.root_cause_analysis_at), pattern)}
                 </p>
-                <AttachmentRenderer
-                  attachments={attachments.filter((url) => !isImageFile(url))}
-                />
+                <hr className="mb-2" />
+                <p className="text-sm text-gray-700">{r.root_cause_analysis}</p>
               </div>
-            )}
+            ))}
+          </div>
+          <div className="flex justify-end border-t px-5 py-3">
+            <button
+              onClick={() => setModal(null)}
+              className="px-4 py-2 text-sm text-white bg-red-600 rounded hover:bg-red-700"
+            >
+              Close
+            </button>
+          </div>
+        </Modal>
+      )}
 
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-              <div className="flex items-center gap-3">
-                {userType !== "agent" && userType !== "customer" && (
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={isPrivate}
-                      onChange={(e) => setIsPrivate(e.target.checked)}
-                      className="w-4 h-4"
-                    />
-                    <span className="text-xs md:text-sm text-gray-700">
-                      {isPrivate ? "Internal Comment" : "External Comment"}
-                    </span>
-                  </label>
+      {modal === "update" && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-lg mx-4">
+            {/* Header */}
+            <div className="flex items-center justify-between border-b px-6 py-4">
+              <div>
+                <h2 className="text-lg font-bold text-gray-800">
+                  Update Ticket
+                </h2>
+                <p className="text-xs text-gray-400 mt-0.5">
+                  {ticket?.ticket_id}
+                </p>
+              </div>
+              <button
+                onClick={() => setModal(null)}
+                className="text-gray-400 hover:text-gray-600 transition-colors"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="px-6 py-5 flex flex-col gap-5">
+              {/* Title */}
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1.5">
+                  Ticket Title
+                </label>
+                <input
+                  type="text"
+                  value={updateTitle}
+                  onChange={(e) => setUpdateTitle(e.target.value)}
+                  placeholder="Enter ticket title"
+                  className="w-full border border-gray-300 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+                {updateTitle && updateTitle !== ticket?.title && (
+                  <p className="text-xs text-orange-500 mt-1">
+                    ⚠ Title will be changed
+                  </p>
                 )}
               </div>
 
-              {/* Status dropdown and Submit button */}
-              <div className="flex items-center gap-3 w-full sm:w-auto">
-                {/* Status Dropdown - only visible for certain user types */}
-                {userType !== "agent" &&
-                  userType !== "customer" &&
-                  userType !== "pbx_user" && (
-                    <div className="flex items-center gap-2">
-                      <label className="text-xs md:text-sm text-gray-600 whitespace-nowrap">
-                        Status:
-                      </label>
-                      <select
-                        value={status}
-                        onChange={(e) => handleStatusChange(e.target.value)}
-                        disabled={statusLoading}
-                        className={`rounded border border-gray-300 bg-white px-2 py-1.5 text-xs md:text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
-                          statusLoading
-                            ? "opacity-50 cursor-not-allowed"
-                            : "cursor-pointer"
+              {/* Priority */}
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1.5">
+                  Priority
+                </label>
+                <div className="grid grid-cols-3 gap-3">
+                  {[
+                    {
+                      value: "low",
+                      label: "Low",
+                      color: "text-green-700 border-green-300 bg-green-50",
+                      active:
+                        "border-green-500 bg-green-100 ring-2 ring-green-400",
+                    },
+                    {
+                      value: "medium",
+                      label: "Medium",
+                      color: "text-orange-700 border-orange-300 bg-orange-50",
+                      active:
+                        "border-orange-500 bg-orange-100 ring-2 ring-orange-400",
+                    },
+                    {
+                      value: "high",
+                      label: "High",
+                      color: "text-red-700 border-red-300 bg-red-50",
+                      active: "border-red-500 bg-red-100 ring-2 ring-red-400",
+                    },
+                  ].map((p) => (
+                    <button
+                      key={p.value}
+                      onClick={() => setUpdatePriority(p.value)}
+                      className={`flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg border-2 text-sm font-semibold transition-all cursor-pointer ${
+                        updatePriority === p.value ? p.active : p.color
+                      }`}
+                    >
+                      <span
+                        className={`w-2 h-2 rounded-full ${
+                          p.value === "low"
+                            ? "bg-green-500"
+                            : p.value === "medium"
+                              ? "bg-orange-500"
+                              : "bg-red-500"
                         }`}
-                      >
-                        <option value="Open">Open</option>
-                        <option value="In Progress">In Progress</option>
-                        <option value="Solved">Solved</option>
-                      </select>
-                    </div>
-                  )}
+                      />
+                      {p.label}
+                    </button>
+                  ))}
+                </div>
+                {updatePriority && updatePriority !== ticket?.priority && (
+                  <p className="text-xs text-orange-500 mt-1.5">
+                    ⚠ Priority will change from{" "}
+                    <strong>{ticket?.priority?.toUpperCase()}</strong> to{" "}
+                    <strong>{updatePriority?.toUpperCase()}</strong>
+                  </p>
+                )}
+              </div>
 
-                {/* Submit button */}
-                <button
-                  onClick={handleSubmit}
-                  disabled={isSubmitDisabled}
-                  className={`w-full sm:w-auto px-4 md:px-6 py-2 rounded text-white text-sm md:text-base
-    ${
-      isSubmitDisabled
-        ? "bg-gray-400 cursor-not-allowed"
-        : "bg-black hover:bg-gray-900"
-    }`}
-                  style={{ cursor: "pointer" }}
-                >
-                  Submit
-                </button>
+              {/* Current values info */}
+              <div className="bg-gray-50 rounded-lg px-4 py-3 border border-gray-200">
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
+                  Current Values
+                </p>
+                <div className="flex gap-6 text-sm">
+                  <div>
+                    <span className="text-gray-500">Title: </span>
+                    <span className="text-gray-800 font-medium">
+                      {ticket?.title}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-gray-500">Priority: </span>
+                    <span
+                      className={`font-semibold ${
+                        ticket?.priority === "high"
+                          ? "text-red-600"
+                          : ticket?.priority === "medium"
+                            ? "text-orange-500"
+                            : "text-green-600"
+                      }`}
+                    >
+                      {ticket?.priority?.toUpperCase()}
+                    </span>
+                  </div>
+                </div>
               </div>
             </div>
+
+            {/* Footer */}
+            <div className="flex justify-end gap-3 border-t px-6 py-4">
+              <button
+                onClick={() => setModal(null)}
+                className="px-4 py-2 text-sm font-medium text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleUpdate}
+                disabled={actionLoading || (!updateTitle && !updatePriority)}
+                className="px-5 py-2 text-sm font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                {actionLoading ? "Saving..." : "Save Changes"}
+              </button>
+            </div>
           </div>
-        </div>
-
-        {/* Right side - Details Panel */}
-        <div className="lg:col-span-4 bg-white p-3 md:p-6 rounded-lg border border-gray-200 shadow-sm">
-          <DetailsPanel
-            ticket={ticket}
-            onTicketUpdated={() => setRefresh(Math.random())}
-          />
-        </div>
-      </div>
-
-      {/* 🖼️ Image Preview Overlay */}
-      {previewImage && (
-        <div
-          className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4"
-          onClick={() => setPreviewImage(null)}
-        >
-          <img
-            src={previewImage}
-            alt="Preview"
-            className="max-w-full max-h-full rounded-lg shadow-lg border border-white"
-            onClick={(e) => e.stopPropagation()}
-          />
         </div>
       )}
     </div>

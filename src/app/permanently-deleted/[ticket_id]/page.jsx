@@ -3,188 +3,159 @@
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { ChevronLeft } from "lucide-react";
-import { getTicketById } from "@/api/ticketingApis";
+import { getTicketById } from "@/api/tickets";
+import ShowAttachments from "@/components/shared/ShowAttachments";
+import * as date from "date-and-time";
+import DOMPurify from "dompurify";
+
+const pattern = date.compile("MMM DD YYYY • hh:mm A");
+const safe = (html) => ({ __html: DOMPurify.sanitize(html || "") });
 
 export default function PermanentlyDeletedTicketDetails() {
   const { ticket_id } = useParams();
   const router = useRouter();
-
   const [ticket, setTicket] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-
   const [previewImage, setPreviewImage] = useState(null);
 
-  // ---------------- FETCH TICKET ----------------
   useEffect(() => {
-    async function fetchTicket() {
-      try {
-        setLoading(true);
-        const res = await getTicketById(ticket_id);
-        setTicket(res?.data?.data?.[0] || null);
-      } catch (err) {
-        console.error("Error fetching ticket:", err);
-        setError("Failed to load ticket details.");
-      } finally {
-        setLoading(false);
-      }
-    }
-
-    if (ticket_id) fetchTicket();
+    getTicketById(ticket_id)
+      .then((res) => setTicket(res?.data?.data?.[0] || null))
+      .catch(() => {})
+      .finally(() => setLoading(false));
   }, [ticket_id]);
 
-  // ---------------- UI STATES ----------------
   if (loading)
     return (
-      <div className="p-10 text-center text-gray-600">
-        <h2 className="text-xl font-semibold">Loading ticket...</h2>
+      <div className="flex items-center justify-center py-20">
+        <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
       </div>
     );
-
-  if (error)
-    return (
-      <div className="p-10 text-center text-red-600">
-        <h2 className="text-xl font-semibold">Error</h2>
-        <p className="text-sm mt-2">{error}</p>
-      </div>
-    );
-
   if (!ticket)
     return (
-      <div className="p-10 text-center text-gray-600">
-        <h2 className="text-xl font-semibold">Ticket not found</h2>
-      </div>
+      <div className="p-10 text-center text-gray-600">Ticket not found.</div>
     );
 
-  // ---------------- MAIN UI ----------------
   return (
-    <div className="p-6 min-h-screen bg-gray-50">
-      {/* FULL WIDTH CONTAINER */}
-      <div className="bg-white p-6 rounded-lg border border-gray-200 shadow-sm w-full">
-        {/* HEADER */}
-        <div className="border-b p-4 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <ChevronLeft
-              onClick={() => router.back()}
-              className="w-5 h-5 cursor-pointer hover:text-blue-600"
-            />
-            <span className="text-sm text-gray-700 font-medium">
-              {ticket?.title}
-            </span>
-          </div>
-
-          <span className="text-xs bg-red-100 text-red-700 px-3 py-1 rounded">
-            Permanently Deleted
-          </span>
+    <div className="max-w-4xl mx-auto px-4 md:px-6 py-6">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => router.back()}
+            className="text-gray-500 hover:text-gray-800"
+          >
+            <ChevronLeft size={20} />
+          </button>
+          <h1 className="text-base md:text-lg font-bold text-gray-800">
+            Permanently Deleted — Ticket Details
+          </h1>
         </div>
-
-        {/* BASIC INFO */}
-        <div className="p-6 border-b text-sm text-gray-700 leading-relaxed space-y-1">
-          <p>
-            <b>Ticket ID:</b> {ticket.ticket_id}
-          </p>
-          <p>
-            <b>Issued To:</b> {ticket.issued_to}
-          </p>
-          <p>
-            <b>Issued By:</b> {ticket.issuer_number}
-          </p>
-          <p>
-            <b>Status:</b>{" "}
-            <span className="capitalize">{ticket.ticket_status}</span>
-          </p>
-        </div>
-
-        {/* ATTACHMENTS */}
-        {ticket.attachments?.length > 0 && (
-          <div className="p-6 border-b bg-white">
-            <h3 className="text-lg font-semibold mb-3">Attachments</h3>
-
-            <div className="flex flex-wrap gap-4">
-              {ticket.attachments.map((url, index) => (
-                <img
-                  key={index}
-                  src={url}
-                  alt={`attachment-${index}`}
-                  onClick={() =>
-                    setPreviewImage(previewImage === url ? null : url)
-                  }
-                  className={`w-40 h-40 object-cover rounded border cursor-pointer transition 
-                    ${
-                      previewImage === url
-                        ? "scale-105 ring-4 ring-blue-400"
-                        : "hover:opacity-80"
-                    }`}
-                />
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* COMMENTS */}
-        <div className="p-6">
-          <h3 className="text-lg font-semibold mb-3">Comments</h3>
-
-          {ticket.comments?.length > 0 ? (
-            ticket.comments.map((comment, i) => (
-              <div
-                key={comment.id || i}
-                className="mb-4 border rounded-lg p-4 bg-gray-50"
-              >
-                <div className="flex justify-between mb-2 items-center">
-                  <div className="flex items-center gap-2">
-                    <span className="font-medium text-gray-800">
-                      {comment.commenter_name || "Unknown"}
-                    </span>
-                  </div>
-
-                  <span className="text-xs text-gray-500">
-                    {new Date(comment.created_at).toLocaleString()}
-                  </span>
-                </div>
-
-                <p className="text-gray-700 whitespace-pre-line">
-                  {comment.message || ""}
-                </p>
-
-                {comment.attachments?.length > 0 && (
-                  <div className="mt-3 flex flex-wrap gap-3">
-                    {comment.attachments.map((url, index) => (
-                      <img
-                        key={index}
-                        src={url}
-                        alt={`comment-attachment-${index}`}
-                        onClick={() =>
-                          setPreviewImage(previewImage === url ? null : url)
-                        }
-                        className={`w-32 h-32 object-cover rounded border cursor-pointer transition ${
-                          previewImage === url
-                            ? "scale-105 ring-4 ring-blue-400"
-                            : "hover:opacity-80"
-                        }`}
-                      />
-                    ))}
-                  </div>
-                )}
-              </div>
-            ))
-          ) : (
-            <p className="text-gray-500 italic text-sm">No comments.</p>
-          )}
-        </div>
+        <span className="text-xs bg-red-100 text-red-700 px-3 py-1 rounded font-medium">
+          Permanently Deleted
+        </span>
       </div>
 
-      {/* IMAGE PREVIEW OVERLAY */}
+      {/* Ticket info */}
+      <div className="bg-white rounded-sm border border-gray-200 p-5 mb-4">
+        <div className="flex items-start justify-between gap-3 flex-wrap mb-3">
+          <h2 className="text-xl font-bold text-gray-800">{ticket.title}</h2>
+        </div>
+        <hr className="mb-3" />
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-4 text-sm">
+          <div>
+            <span className="font-semibold text-gray-700">Ticket ID: </span>
+            <span className="font-light text-gray-600">{ticket.ticket_id}</span>
+          </div>
+          <div>
+            <span className="font-semibold text-gray-700">Client: </span>
+            <span className="font-light text-gray-600">
+              {ticket.client_name}
+            </span>
+          </div>
+          <div>
+            <span className="font-semibold text-gray-700">Email: </span>
+            <span className="font-light text-gray-600">
+              {ticket.client_email}
+            </span>
+          </div>
+          <div>
+            <span className="font-semibold text-gray-700">Mobile: </span>
+            <span className="font-light text-gray-600">
+              {ticket.client_mobile}
+            </span>
+          </div>
+          <div>
+            <span className="font-semibold text-gray-700">Service: </span>
+            <span className="font-light text-gray-600">
+              {ticket.service_type?.toUpperCase()}
+            </span>
+          </div>
+          <div>
+            <span className="font-semibold text-gray-700">Status: </span>
+            <span className="font-light text-gray-600 capitalize">
+              {ticket.status}
+            </span>
+          </div>
+          <div>
+            <span className="font-semibold text-gray-700">Priority: </span>
+            <span className="font-light text-gray-600 capitalize">
+              {ticket.priority}
+            </span>
+          </div>
+          <div>
+            <span className="font-semibold text-gray-700">Created: </span>
+            <span className="font-light text-gray-600">
+              {ticket.created_at
+                ? date.format(new Date(ticket.created_at), pattern)
+                : "—"}
+            </span>
+          </div>
+        </div>
+        <hr className="mb-3" />
+        {ticket.attachments?.length > 0 && (
+          <ShowAttachments attachments={ticket.attachments} />
+        )}
+        <div
+          className="prose prose-sm max-w-none text-sm"
+          dangerouslySetInnerHTML={safe(ticket.description)}
+        />
+      </div>
+
+      {/* Threads */}
+      {ticket.threads?.map((t, i) => (
+        <div
+          key={i}
+          className="bg-white rounded-sm border border-gray-200 p-4 mb-3"
+        >
+          <div className="flex items-center gap-2 mb-1">
+            <span className="font-semibold text-sm text-gray-800">
+              {t.commenter_name}
+            </span>
+          </div>
+          <p className="text-xs text-gray-400 mb-2">
+            {date.format(new Date(t.created_at), pattern)}
+          </p>
+          <hr className="mb-2" />
+          {t.attachments?.length > 0 && (
+            <ShowAttachments attachments={t.attachments} />
+          )}
+          <div
+            className="prose prose-sm max-w-none text-sm"
+            dangerouslySetInnerHTML={safe(t.contents)}
+          />
+        </div>
+      ))}
+
       {previewImage && (
         <div
-          className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center"
+          className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4"
           onClick={() => setPreviewImage(null)}
         >
           <img
             src={previewImage}
-            alt="Preview"
-            className="max-w-[90%] max-h-[90%] rounded-lg shadow-lg border border-white cursor-pointer"
-            onClick={(e) => e.stopPropagation()}
+            alt="preview"
+            className="max-h-full max-w-full rounded"
           />
         </div>
       )}
