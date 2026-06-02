@@ -45,6 +45,19 @@ const TEAMS = [
   { label: "NPI", value: "npi" },
 ];
 
+const STATUS_COLORS = {
+  open: "text-blue-700",
+  "in progress": "text-green-700",
+  "on hold": "text-orange-600",
+  closed: "text-red-600",
+};
+
+const PRIORITY_COLORS = {
+  low: "text-green-600",
+  medium: "text-orange-500",
+  high: "text-red-600",
+};
+
 function InfoRow({ label, value }) {
   return (
     <div className="text-sm">
@@ -142,7 +155,6 @@ export default function TicketDetailsPage() {
         await postAttachmentToS3(gpp.data.data.url, fd);
       }
     } catch {}
-
     addComment({
       ticket_id: id,
       contents: message,
@@ -166,13 +178,14 @@ export default function TicketDetailsPage() {
         setFileKey(Date.now());
         fetchData();
         if (ticket.status === "closed") {
-          changeStatus(id, "in progress").then(() =>
+          changeStatus(id, "in progress").then(() => {
             setAlertCtx({
               title: "Status changed",
               message: "Ticket reopened (In Progress).",
               type: "success",
-            }),
-          );
+            });
+            fetchData();
+          });
         } else {
           setAlertCtx({
             title: "Success",
@@ -358,7 +371,6 @@ export default function TicketDetailsPage() {
     )
       .then(() => {
         setRootCauseText("");
-        // Chain directly into resolve after root cause saved
         resolveTicket(
           ticket.ticket_id,
           userData.customer_id,
@@ -440,302 +452,391 @@ export default function TicketDetailsPage() {
       </div>
     );
 
-  const STATUS_COLORS = {
-    open: "text-blue-700",
-    "in progress": "text-green-700",
-    "on hold": "text-orange-600",
-    closed: "text-red-600",
-  };
   const canComment = message.replace(/<[^>]+>/g, "").trim().length > 0;
   const rootHistory = ticket?.root_cause_history || [];
 
-  console.log("userType:", userType, "status:", ticket?.status);
-
   return (
-    <div className="max-w-5xl mx-auto px-4 md:px-6 py-6">
-      {/* Header */}
-      <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => router.back()}
-            className="text-gray-500 hover:text-gray-800 transition-colors"
-          >
-            <ChevronLeft size={20} />
-          </button>
-          <h1 className="text-base md:text-lg font-bold text-gray-800">
-            Ticket Details
-          </h1>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          {rootHistory.length > 0 && (
-            <button
-              onClick={() => setModal("viewroot")}
-              className="px-3 py-1.5 text-xs font-medium bg-blue-600 text-white rounded hover:bg-blue-700"
-            >
-              View Root Cause
-            </button>
-          )}
-          {ticket?.status !== "closed" && userType !== "client" && (
-            <button
-              onClick={() => setModal("forward")}
-              className="px-3 py-1.5 text-xs font-medium bg-blue-600 text-white rounded hover:bg-blue-700"
-            >
-              Forward Ticket
-            </button>
-          )}
-          {ticket?.status === "closed" ? (
-            <button
-              disabled
-              className="px-3 py-1.5 text-xs font-medium bg-green-600 text-white rounded opacity-80 cursor-default"
-            >
-              Ticket Closed
-            </button>
-          ) : userType !== "client" &&
-            ticket?.status !== "open" &&
-            ticket?.status !== "on hold" ? (
-            <button
-              onClick={() => setModal("resolve")}
-              className="px-3 py-1.5 text-xs font-medium bg-blue-600 text-white rounded hover:bg-blue-700"
-            >
-              Resolve Ticket
-            </button>
-          ) : null}
-          {userType !== "client" &&
-            (ticket?.status === "open" || ticket?.status === "on hold") && (
-              <button
-                onClick={() => setModal("pick")}
-                className="px-3 py-1.5 text-xs font-medium bg-blue-600 text-white rounded hover:bg-blue-700"
-              >
-                Pick
-              </button>
-            )}
-          {userType !== "client" && ticket?.status === "in progress" && (
-            <button
-              onClick={() => setModal("drop")}
-              className="px-3 py-1.5 text-xs font-medium bg-red-600 text-white rounded hover:bg-red-700"
-            >
-              Drop
-            </button>
-          )}
-          {(userType === "support" || userType === "manager") &&
-            ticket?.status !== "closed" && (
-              <button
-                onClick={() => {
-                  setUpdateTitle(ticket?.title || "");
-                  setUpdatePriority(ticket?.priority || "");
-                  setModal("update");
-                }}
-                className="px-3 py-1.5 text-xs font-medium bg-gray-700 text-white rounded hover:bg-gray-800"
-              >
-                Actions
-              </button>
-            )}
-        </div>
+    <div className="px-4 md:px-6 py-6">
+      {/* Back button */}
+      <div className="flex items-center gap-2 mb-4">
+        <button
+          onClick={() => router.back()}
+          className="cursor-pointer text-gray-500 hover:text-gray-800 transition-colors"
+        >
+          <ChevronLeft size={20} />
+        </button>
+        <h1 className="text-base md:text-lg font-bold text-gray-800">
+          Ticket Details
+        </h1>
       </div>
 
-      {/* Ticket info */}
-      <div className="bg-white rounded-sm border border-gray-200 p-5 mb-4">
-        <div className="flex items-start justify-between gap-3 flex-wrap mb-3">
-          <div>
-            <h2 className="text-xl font-bold text-gray-800">{ticket?.title}</h2>
-            <p className="text-xs text-gray-400 mt-1">
-              {ticket?.created_at
-                ? date.format(new Date(ticket.created_at), pattern)
-                : ""}
-            </p>
-          </div>
-          <span
-            className={`text-sm font-semibold ${STATUS_COLORS[ticket?.status] || "text-gray-600"}`}
-          >
-            {ticket?.status?.toUpperCase()}
-          </span>
-        </div>
-        <hr className="mb-3" />
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-4">
-          <InfoRow label="Ticket ID" value={ticket?.ticket_id} />
-          <InfoRow label="Client" value={ticket?.client_name} />
-          {ticket?.client_company && (
-            <InfoRow label="Company" value={ticket.client_company} />
-          )}
-          <InfoRow label="Client Email" value={ticket?.client_email} />
-          <InfoRow label="Client Mobile" value={ticket?.client_mobile} />
-          <InfoRow
-            label="DID Number"
-            value={ticket?.did_number || "Not provided"}
-          />
-          <InfoRow
-            label="Issued By"
-            value={
-              ticket?.issuer_name
-                ? `${ticket.issuer_name} (${ticket.issuer_user_type?.toUpperCase()})`
-                : ""
-            }
-          />
-          <InfoRow label="Issuer Email" value={ticket?.issuer_email} />
-          <InfoRow
-            label="Service"
-            value={
-              ticket?.service_type === "internet"
-                ? "INTERNET / DATA"
-                : ticket?.service_type?.toUpperCase()
-            }
-          />
-          <InfoRow label="Team" value={ticket?.department?.toUpperCase()} />
-          <InfoRow label="Priority" value={ticket?.priority?.toUpperCase()} />
-          {userType !== "client" && ticket?.is_assigned && (
-            <InfoRow
-              label="Picked By"
-              value={ticket?.assignee_history?.[0]?.assignee_name}
-            />
-          )}
-          {userType !== "client" && ticket?.forwarder_history?.length > 0 && (
-            <InfoRow
-              label="Forward Cause"
-              value={ticket.forwarder_history[0].forward_cause}
-            />
-          )}
-          {ticket?.on_hold_cause && userType !== "client" && (
-            <InfoRow label="Drop Cause" value={ticket.on_hold_cause} />
-          )}
-          {ticket?.status === "closed" && (
-            <>
+      {/* Two column layout */}
+      <div className="flex flex-col lg:flex-row gap-4 items-start">
+        {/* LEFT — main content */}
+        <div className="flex-1 min-w-0 flex flex-col gap-4">
+          {/* Ticket info card */}
+          <div className="bg-white rounded-sm border border-gray-200 p-5">
+            <div className="flex items-start justify-between gap-3 flex-wrap mb-3">
+              <div>
+                <h2 className="text-xl font-bold text-gray-800">
+                  {ticket?.title}
+                </h2>
+                <p className="text-xs text-gray-400 mt-1">
+                  {ticket?.created_at
+                    ? date.format(new Date(ticket.created_at), pattern)
+                    : ""}
+                </p>
+              </div>
+              <span
+                className={`text-sm font-semibold ${STATUS_COLORS[ticket?.status] || "text-gray-600"}`}
+              >
+                {ticket?.status?.toUpperCase()}
+              </span>
+            </div>
+            <hr className="mb-3" />
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-4">
+              <InfoRow label="Ticket ID" value={ticket?.ticket_id} />
+              <InfoRow label="Client" value={ticket?.client_name} />
+              {ticket?.client_company && (
+                <InfoRow label="Company" value={ticket.client_company} />
+              )}
+              <InfoRow label="Client Email" value={ticket?.client_email} />
+              <InfoRow label="Client Mobile" value={ticket?.client_mobile} />
               <InfoRow
-                label="Resolved By"
-                value={ticket?.resolver_history?.[0]?.resolver_name}
+                label="DID Number"
+                value={ticket?.did_number || "Not provided"}
               />
               <InfoRow
-                label="Resolved At"
+                label="Issued By"
                 value={
-                  ticket?.resolver_history?.[0]?.resolved_at
-                    ? date.format(
-                        new Date(ticket.resolver_history[0].resolved_at),
-                        pattern,
-                      )
+                  ticket?.issuer_name
+                    ? `${ticket.issuer_name} (${ticket.issuer_user_type?.toUpperCase()})`
                     : ""
                 }
               />
-            </>
-          )}
-        </div>
-        <hr className="mb-3" />
-        {ticket?.attachments?.length > 0 && (
-          <ShowAttachments attachments={ticket.attachments} />
-        )}
-        <div
-          className="prose prose-sm max-w-none text-sm"
-          dangerouslySetInnerHTML={safe(ticket?.description)}
-        />
-      </div>
-
-      {/* Reply */}
-      <div className="bg-white rounded-sm border border-gray-200 p-5 mb-4">
-        <h3 className="text-sm font-semibold text-gray-700 mb-3">Add Reply</h3>
-        <div className="mb-14 border border-gray-200 rounded overflow-hidden">
-          <ReactQuill
-            theme="snow"
-            value={message}
-            onChange={setMessage}
-            placeholder="Type here..."
-            className="bg-white"
-            style={{ height: "180px", overflowY: "auto" }}
-            modules={{
-              toolbar: [
-                ["bold", "italic", "underline"],
-                ["blockquote"],
-                [{ list: "ordered" }, { list: "bullet" }],
-                ["clean"],
-              ],
-            }}
-          />
-        </div>
-        <div className="flex items-center justify-between flex-wrap gap-3">
-          {userType !== "client" && (
-            <label className="flex items-center gap-2 text-sm cursor-pointer">
-              <input
-                type="checkbox"
-                checked={isPrivate}
-                onChange={(e) => setIsPrivate(e.target.checked)}
-                className="accent-blue-600"
-              />
-              <span
-                className={
-                  isPrivate ? "text-blue-700 font-medium" : "text-orange-600"
+              <InfoRow label="Issuer Email" value={ticket?.issuer_email} />
+              <InfoRow
+                label="Service"
+                value={
+                  ticket?.service_type === "internet"
+                    ? "INTERNET / DATA"
+                    : ticket?.service_type?.toUpperCase()
                 }
-              >
-                {isPrivate ? "Internal Comment" : "External Comment"}
-              </span>
-            </label>
-          )}
-          <div className="flex items-center gap-3 ml-auto">
-            <label className="flex items-center gap-1.5 px-3 py-1.5 text-sm border border-gray-300 rounded cursor-pointer hover:bg-gray-50 transition-colors text-gray-600">
-              <Paperclip className="w-4 h-4" />
-              {files.length > 0
-                ? `${files.length} file${files.length > 1 ? "s" : ""} attached`
-                : "Attach"}
-              <input
-                type="file"
-                multiple
-                key={fileKey}
-                accept="image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.zip,.csv"
-                onChange={(e) => setFiles(Array.from(e.target.files))}
-                className="hidden"
               />
-            </label>
-            {files.length > 0 && (
-              <button
-                onClick={() => {
-                  setFiles([]);
-                  setFileKey(Date.now());
-                }}
-                className="text-xs text-red-500 hover:text-red-700"
-              >
-                Clear
-              </button>
-            )}
-            <button
-              onClick={handleReply}
-              disabled={!canComment || commentLoading}
-              style={{ cursor: "pointer" }}
-              className="px-5 py-2 text-sm font-semibold text-white bg-blue-600 rounded hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
-            >
-              {commentLoading ? "Sending..." : "Reply"}
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* Threads */}
-      {threads.map(
-        (t, i) =>
-          !(userType === "client" && t.is_internal) && (
-            <div
-              key={i}
-              className={`rounded-sm border border-gray-200 p-4 mb-3 ${t.commenter_user_type === "client" ? "bg-teal-50" : "bg-white"}`}
-            >
-              <div className="flex items-center gap-2 mb-1">
-                <span className="font-semibold text-sm text-gray-800">
-                  {t.commenter_name}
-                </span>
-                {t.is_internal && (
-                  <span className="px-2 py-0.5 bg-red-400 text-white text-xs rounded-full">
-                    Internal
-                  </span>
-                )}
-              </div>
-              <p className="text-xs text-gray-400 mb-2">
-                {date.format(new Date(t.created_at), pattern)}
-              </p>
-              <hr className="mb-2" />
-              {t.attachments?.length > 0 && (
-                <ShowAttachments attachments={t.attachments} />
+              <InfoRow label="Team" value={ticket?.department?.toUpperCase()} />
+              <InfoRow
+                label="Priority"
+                value={ticket?.priority?.toUpperCase()}
+              />
+              {userType !== "client" && ticket?.is_assigned && (
+                <InfoRow
+                  label="Picked By"
+                  value={ticket?.assignee_history?.[0]?.assignee_name}
+                />
               )}
-              <div
-                className="prose prose-sm max-w-none text-sm"
-                dangerouslySetInnerHTML={safe(t.contents)}
+              {userType !== "client" &&
+                ticket?.forwarder_history?.length > 0 && (
+                  <InfoRow
+                    label="Forward Cause"
+                    value={ticket.forwarder_history[0].forward_cause}
+                  />
+                )}
+              {ticket?.on_hold_cause && userType !== "client" && (
+                <InfoRow label="Drop Cause" value={ticket.on_hold_cause} />
+              )}
+              {ticket?.status === "closed" && (
+                <>
+                  <InfoRow
+                    label="Resolved By"
+                    value={ticket?.resolver_history?.[0]?.resolver_name}
+                  />
+                  <InfoRow
+                    label="Resolved At"
+                    value={
+                      ticket?.resolver_history?.[0]?.resolved_at
+                        ? date.format(
+                            new Date(ticket.resolver_history[0].resolved_at),
+                            pattern,
+                          )
+                        : ""
+                    }
+                  />
+                </>
+              )}
+            </div>
+            <hr className="mb-3" />
+            {ticket?.attachments?.length > 0 && (
+              <ShowAttachments attachments={ticket.attachments} />
+            )}
+            <div
+              className="prose prose-sm max-w-none text-sm"
+              dangerouslySetInnerHTML={safe(ticket?.description)}
+            />
+          </div>
+
+          {/* Reply */}
+          <div className="bg-white rounded-sm border border-gray-200 p-5">
+            <h3 className="text-sm font-semibold text-gray-700 mb-3">
+              Add Reply
+            </h3>
+            <div className="mb-14 border border-gray-200 rounded overflow-hidden">
+              <ReactQuill
+                theme="snow"
+                value={message}
+                onChange={setMessage}
+                placeholder="Type here..."
+                className="bg-white"
+                style={{ height: "180px", overflowY: "auto" }}
+                modules={{
+                  toolbar: [
+                    ["bold", "italic", "underline"],
+                    ["blockquote"],
+                    [{ list: "ordered" }, { list: "bullet" }],
+                    ["clean"],
+                  ],
+                }}
               />
             </div>
-          ),
-      )}
+            <div className="flex items-center justify-between flex-wrap gap-3">
+              {userType !== "client" && (
+                <label className="flex items-center gap-2 text-sm cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={isPrivate}
+                    onChange={(e) => setIsPrivate(e.target.checked)}
+                    className="accent-blue-600"
+                  />
+                  <span
+                    className={
+                      isPrivate
+                        ? "text-blue-700 font-medium"
+                        : "text-orange-600"
+                    }
+                  >
+                    {isPrivate ? "Internal Comment" : "External Comment"}
+                  </span>
+                </label>
+              )}
+              <div className="flex items-center gap-3 ml-auto">
+                <label className="flex items-center gap-1.5 px-3 py-1.5 text-sm border border-gray-300 rounded cursor-pointer hover:bg-gray-50 transition-colors text-gray-600">
+                  <Paperclip className="w-4 h-4" />
+                  {files.length > 0
+                    ? `${files.length} file${files.length > 1 ? "s" : ""} attached`
+                    : "Attach"}
+                  <input
+                    type="file"
+                    multiple
+                    key={fileKey}
+                    accept="image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.zip,.csv"
+                    onChange={(e) => setFiles(Array.from(e.target.files))}
+                    className="hidden"
+                  />
+                </label>
+                {files.length > 0 && (
+                  <button
+                    onClick={() => {
+                      setFiles([]);
+                      setFileKey(Date.now());
+                    }}
+                    className="text-xs text-red-500 hover:text-red-700"
+                  >
+                    Clear
+                  </button>
+                )}
+                <button
+                  onClick={handleReply}
+                  disabled={!canComment || commentLoading}
+                  style={{ cursor: "pointer" }}
+                  className="px-5 py-2 text-sm font-semibold text-white bg-blue-600 rounded hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
+                >
+                  {commentLoading ? "Sending..." : "Reply"}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Threads */}
+          {threads.map(
+            (t, i) =>
+              !(userType === "client" && t.is_internal) && (
+                <div
+                  key={i}
+                  className={`rounded-sm border border-gray-200 p-4 ${t.commenter_user_type === "client" ? "bg-teal-50" : "bg-white"}`}
+                >
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="font-semibold text-sm text-gray-800">
+                      {t.commenter_name}
+                    </span>
+                    {t.is_internal && (
+                      <span className="px-2 py-0.5 bg-red-400 text-white text-xs rounded-full">
+                        Internal
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs text-gray-400 mb-2">
+                    {date.format(new Date(t.created_at), pattern)}
+                  </p>
+                  <hr className="mb-2" />
+                  {t.attachments?.length > 0 && (
+                    <ShowAttachments attachments={t.attachments} />
+                  )}
+                  <div
+                    className="prose prose-sm max-w-none text-sm"
+                    dangerouslySetInnerHTML={safe(t.contents)}
+                  />
+                </div>
+              ),
+          )}
+        </div>
+
+        {/* RIGHT — actions panel */}
+        {userType !== "client" && (
+          <div className="w-full lg:w-72 flex-shrink-0 flex flex-col gap-4">
+            {/* Status card */}
+            <div className="bg-white rounded-sm border border-gray-200 p-4">
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">
+                Status
+              </p>
+              <div
+                className={`text-base font-bold ${STATUS_COLORS[ticket?.status] || "text-gray-600"}`}
+              >
+                {ticket?.status?.toUpperCase()}
+              </div>
+              <div className="mt-1 text-xs text-gray-400">
+                Priority:{" "}
+                <span
+                  className={`font-semibold ${PRIORITY_COLORS[ticket?.priority] || "text-gray-600"}`}
+                >
+                  {ticket?.priority?.toUpperCase()}
+                </span>
+              </div>
+            </div>
+
+            {/* Ticket actions */}
+            <div className="bg-white rounded-sm border border-gray-200 p-4">
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">
+                Actions
+              </p>
+              <div className="flex flex-col gap-2">
+                {/* Root cause history */}
+                {rootHistory.length > 0 && (
+                  <button
+                    onClick={() => setModal("viewroot")}
+                    className="w-full cursor-pointer text-left px-3 py-2 text-sm font-medium text-blue-700 bg-blue-50 border border-blue-200 rounded hover:bg-blue-100 transition-colors"
+                  >
+                    View Root Cause
+                  </button>
+                )}
+
+                {/* Forward */}
+                {ticket?.status !== "closed" && (
+                  <button
+                    onClick={() => setModal("forward")}
+                    className="w-full cursor-pointer text-left px-3 py-2 text-sm font-medium text-gray-700 bg-gray-50 border border-gray-200 rounded hover:bg-gray-100 transition-colors"
+                  >
+                    Forward Ticket
+                  </button>
+                )}
+
+                {/* Pick */}
+                {(ticket?.status === "open" ||
+                  ticket?.status === "on hold") && (
+                  <button
+                    onClick={() => setModal("pick")}
+                    className="w-full cursor-pointer text-left px-3 py-2 text-sm font-medium text-green-700 bg-green-50 border border-green-200 rounded hover:bg-green-100 transition-colors"
+                  >
+                    Pick Ticket
+                  </button>
+                )}
+
+                {/* Drop */}
+                {ticket?.status === "in progress" && (
+                  <button
+                    onClick={() => setModal("drop")}
+                    className="w-full cursor-pointer text-left px-3 py-2 text-sm font-medium text-red-700 bg-red-50 border border-red-200 rounded hover:bg-red-100 transition-colors"
+                  >
+                    Drop Ticket
+                  </button>
+                )}
+
+                {/* Resolve */}
+                {ticket?.status === "closed" ? (
+                  <div className="w-full px-3 py-2 text-sm font-medium text-green-700 bg-green-50 border border-green-200 rounded text-center">
+                    ✓ Ticket Closed
+                  </div>
+                ) : ticket?.status !== "open" &&
+                  ticket?.status !== "on hold" ? (
+                  <button
+                    onClick={() => setModal("resolve")}
+                    className="w-full cursor-pointer text-left px-3 py-2 text-sm font-medium text-white bg-blue-600 border border-blue-600 rounded hover:bg-blue-700 transition-colors"
+                  >
+                    Resolve Ticket
+                  </button>
+                ) : null}
+
+                {/* Update title / priority — support and manager only */}
+                {(userType === "support" || userType === "manager") &&
+                  ticket?.status !== "closed" && (
+                    <button
+                      onClick={() => {
+                        setUpdateTitle(ticket?.title || "");
+                        setUpdatePriority(ticket?.priority || "");
+                        setModal("update");
+                      }}
+                      className="w-full cursor-pointer text-left px-3 py-2 text-sm font-medium text-gray-700 bg-gray-50 border border-gray-200 rounded hover:bg-gray-100 transition-colors"
+                    >
+                      Update Title / Priority
+                    </button>
+                  )}
+              </div>
+            </div>
+
+            {/* Ticket info summary */}
+            <div className="bg-white rounded-sm border border-gray-200 p-4">
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">
+                Details
+              </p>
+              <div className="flex flex-col gap-2">
+                <div className="text-xs text-gray-500">
+                  Ticket ID{" "}
+                  <span className="block text-gray-800 font-medium text-sm">
+                    {ticket?.ticket_id}
+                  </span>
+                </div>
+                <div className="text-xs text-gray-500">
+                  Service{" "}
+                  <span className="block text-gray-800 font-medium text-sm">
+                    {ticket?.service_type?.toUpperCase() || "—"}
+                  </span>
+                </div>
+                <div className="text-xs text-gray-500">
+                  Team{" "}
+                  <span className="block text-gray-800 font-medium text-sm">
+                    {ticket?.department?.toUpperCase() || "—"}
+                  </span>
+                </div>
+                {ticket?.is_assigned && (
+                  <div className="text-xs text-gray-500">
+                    Picked By{" "}
+                    <span className="block text-gray-800 font-medium text-sm">
+                      {ticket?.assignee_history?.[0]?.assignee_name || "—"}
+                    </span>
+                  </div>
+                )}
+                {ticket?.status === "closed" &&
+                  ticket?.resolver_history?.[0] && (
+                    <div className="text-xs text-gray-500">
+                      Resolved By{" "}
+                      <span className="block text-gray-800 font-medium text-sm">
+                        {ticket.resolver_history[0].resolver_name}
+                      </span>
+                    </div>
+                  )}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
 
       {/* Modals */}
       {modal === "pick" && (
@@ -922,7 +1023,6 @@ export default function TicketDetailsPage() {
       {modal === "update" && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
           <div className="bg-white rounded-lg shadow-xl w-full max-w-lg mx-4">
-            {/* Header */}
             <div className="flex items-center justify-between border-b px-6 py-4">
               <div>
                 <h2 className="text-lg font-bold text-gray-800">
@@ -939,10 +1039,7 @@ export default function TicketDetailsPage() {
                 <X size={20} />
               </button>
             </div>
-
-            {/* Body */}
             <div className="px-6 py-5 flex flex-col gap-5">
-              {/* Title */}
               <div>
                 <label className="block text-sm font-semibold text-gray-700 mb-1.5">
                   Ticket Title
@@ -960,8 +1057,6 @@ export default function TicketDetailsPage() {
                   </p>
                 )}
               </div>
-
-              {/* Priority */}
               <div>
                 <label className="block text-sm font-semibold text-gray-700 mb-1.5">
                   Priority
@@ -992,18 +1087,10 @@ export default function TicketDetailsPage() {
                     <button
                       key={p.value}
                       onClick={() => setUpdatePriority(p.value)}
-                      className={`flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg border-2 text-sm font-semibold transition-all cursor-pointer ${
-                        updatePriority === p.value ? p.active : p.color
-                      }`}
+                      className={`flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg border-2 text-sm font-semibold transition-all cursor-pointer ${updatePriority === p.value ? p.active : p.color}`}
                     >
                       <span
-                        className={`w-2 h-2 rounded-full ${
-                          p.value === "low"
-                            ? "bg-green-500"
-                            : p.value === "medium"
-                              ? "bg-orange-500"
-                              : "bg-red-500"
-                        }`}
+                        className={`w-2 h-2 rounded-full ${p.value === "low" ? "bg-green-500" : p.value === "medium" ? "bg-orange-500" : "bg-red-500"}`}
                       />
                       {p.label}
                     </button>
@@ -1017,8 +1104,6 @@ export default function TicketDetailsPage() {
                   </p>
                 )}
               </div>
-
-              {/* Current values info */}
               <div className="bg-gray-50 rounded-lg px-4 py-3 border border-gray-200">
                 <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
                   Current Values
@@ -1033,13 +1118,7 @@ export default function TicketDetailsPage() {
                   <div>
                     <span className="text-gray-500">Priority: </span>
                     <span
-                      className={`font-semibold ${
-                        ticket?.priority === "high"
-                          ? "text-red-600"
-                          : ticket?.priority === "medium"
-                            ? "text-orange-500"
-                            : "text-green-600"
-                      }`}
+                      className={`font-semibold ${ticket?.priority === "high" ? "text-red-600" : ticket?.priority === "medium" ? "text-orange-500" : "text-green-600"}`}
                     >
                       {ticket?.priority?.toUpperCase()}
                     </span>
@@ -1047,8 +1126,6 @@ export default function TicketDetailsPage() {
                 </div>
               </div>
             </div>
-
-            {/* Footer */}
             <div className="flex justify-end gap-3 border-t px-6 py-4">
               <button
                 onClick={() => setModal(null)}
