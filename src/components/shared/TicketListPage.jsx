@@ -1,23 +1,14 @@
 "use client";
-import {
-  useContext,
-  useEffect,
-  useState,
-  Suspense,
-  useRef,
-  useCallback,
-} from "react";
+import { useContext, useEffect, useState, Suspense, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { alertContext } from "@/hooks/alertContext";
 import { useTicketContext } from "@/context/TicketContext";
-import { getSearchTicket, getUserInfo } from "@/api/tickets";
+import { getUserInfo } from "@/api/tickets";
 import Filter from "@/components/shared/Filter";
 import Pagination from "@/components/shared/Pagination";
 import Table from "@/components/shared/Table";
 import { ticketColumns } from "@/utils/tableColumns";
 import { Plus } from "lucide-react";
-
-const SEARCH_FILTER_IDS = [6, 7];
 
 function TicketListView({ title, fetchFn }) {
   const router = useRouter();
@@ -30,6 +21,7 @@ function TicketListView({ title, fetchFn }) {
   const [loading, setLoading] = useState(false);
   const [filters, setFilters] = useState([]);
   const [userType, setUserType] = useState("");
+  const timerRef = useRef(null);
 
   const page = parseInt(searchParams.get("page") || "1", 10);
   const setPage = (p) => {
@@ -44,80 +36,56 @@ function TicketListView({ title, fetchFn }) {
       .catch(() => {});
   }, []);
 
-  useEffect(() => {
-    const saved = localStorage.getItem("ticket_filters");
-    if (saved) {
-      try {
-        setFilters(JSON.parse(saved));
-      } catch {
-        localStorage.removeItem("ticket_filters");
-      }
+  const buildParams = (currentFilters, currentStatus) => {
+    const p = {};
+    currentFilters.forEach((f) => {
+      if (!f.value?.trim()) return;
+      if (f.label === "Status") p.status = f.value;
+      else if (f.label === "Priority") p.priority = f.value;
+      else if (f.label === "Service Type") p.service_type = f.value;
+      else if (f.label === "Start Date") p.start_date = f.value;
+      else if (f.label === "End Date") p.end_date = f.value;
+      else if (f.label === "Ticket ID") p.ticket_id = f.value.trim();
+      else if (f.label === "Company Name") p.client_companies = f.value.trim();
+    });
+    if (!p.status && currentStatus) p.status = currentStatus;
+    return p;
+  };
+
+  const runFetch = async (pageNo, currentFilters, currentStatus) => {
+    setLoading(true);
+    setTickets([]);
+    try {
+      const params = buildParams(currentFilters, currentStatus);
+      const res = await fetchFn(pageNo, params);
+      setTickets(res.data.data || []);
+      setTotalTickets(res.data.total_data || res.data.total_tickets || 0);
+    } catch {
+      setAlertCtx({
+        title: "Error",
+        message: "Failed to load tickets.",
+        type: "error",
+      });
+    } finally {
+      setLoading(false);
     }
-  }, []);
-
-  const fetchTickets = useCallback(
-    async (pageNo, currentFilters, currentStatus) => {
-      const searchFilter = currentFilters.find(
-        (f) => SEARCH_FILTER_IDS.includes(f.id) && f.value?.trim(),
-      );
-
-      setLoading(true);
-      setTickets([]);
-
-      try {
-        if (searchFilter) {
-          const res = await getSearchTicket(
-            searchFilter.searchKey,
-            searchFilter.value.trim(),
-            pageNo,
-          );
-          setTickets(res.data.data || []);
-          setTotalTickets(res.data.total_data || res.data.total_tickets || 0);
-        } else {
-          const p = {};
-          currentFilters.forEach((f) => {
-            if (!f.value) return;
-            if (f.label === "Status") p.status = f.value;
-            else if (f.label === "Priority") p.priority = f.value;
-            else if (f.label === "Service Type") p.service_type = f.value;
-            else if (f.label === "Start Date") p.start_date = f.value;
-            else if (f.label === "End Date") p.end_date = f.value;
-          });
-          if (!p.status && currentStatus) p.status = currentStatus;
-
-          const res = await fetchFn(pageNo, p);
-          setTickets(res.data.data || []);
-          setTotalTickets(res.data.total_data || res.data.total_tickets || 0);
-        }
-      } catch {
-        setAlertCtx({
-          title: "Error",
-          message: "Failed to load tickets.",
-          type: "error",
-        });
-      } finally {
-        setLoading(false);
-      }
-    },
-    [fetchFn, setAlertCtx],
-  );
-
-  // Debounce ref
-  const timerRef = useRef(null);
+  };
 
   useEffect(() => {
-    const hasTextFilter = filters.some(
-      (f) => SEARCH_FILTER_IDS.includes(f.id) && f.value?.trim(),
+    // Debounce text inputs (Ticket ID, Company Name), instant for others
+    const hasTextInput = filters.some(
+      (f) => f.type === "text" && f.value?.trim(),
     );
-    const delay = hasTextFilter ? 700 : 0;
+    const delay = hasTextInput ? 700 : 0;
 
     if (timerRef.current) clearTimeout(timerRef.current);
-
     timerRef.current = setTimeout(() => {
-      fetchTickets(page, filters, selectedStatus);
+      runFetch(page, filters, selectedStatus);
     }, delay);
 
-    return () => clearTimeout(timerRef.current);
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
   }, [page, filters, selectedStatus]);
 
   return (
@@ -149,7 +117,7 @@ function TicketListView({ title, fetchFn }) {
           data={tickets}
           loading={loading}
           columns={ticketColumns}
-          reload={(p) => fetchTickets(p, filters, selectedStatus)}
+          reload={(p) => runFetch(p, filters, selectedStatus)}
           page={page}
         />
       </div>

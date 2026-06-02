@@ -43,11 +43,13 @@ export function getUserSummaryByDateRange(username, start_date, end_date) {
 // Tickets
 export function getTicketByStatus(page, params = {}) {
   const query = new URLSearchParams();
-  if (params.status)       query.append("status", params.status);
-  if (params.priority)     query.append("priority", params.priority);
-  if (params.service_type) query.append("service_type", params.service_type);
-  if (params.start_date)   query.append("start_date", params.start_date);
-  if (params.end_date)     query.append("end_date", params.end_date);
+  if (params.status)         query.append("status", params.status);
+  if (params.priority)       query.append("priority", params.priority);
+  if (params.service_type)   query.append("service_type", params.service_type.toLowerCase());
+  if (params.start_date)     query.append("start_date", params.start_date);
+  if (params.end_date)       query.append("end_date", params.end_date);
+  if (params.ticket_id)      query.append("ticket_id", params.ticket_id);
+  if (params.client_companies) query.append("client_companies", params.client_companies);
   const qs = query.toString();
   return execute.get(`/api/v1/tickets/user-type-wise-tickets/${page}${qs ? `?${qs}` : ""}`);
 }

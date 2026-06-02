@@ -68,7 +68,7 @@ export default function Sidebar({ onNavigate }) {
   };
 
   const isAdmin = userType === "admin";
-  const canSeeTrash = isAdmin;
+  const canSeePermaDeleted = userType === "admin" || userType === "hod";
 
   return (
     <div className="w-full bg-background border-r border-border flex flex-col min-h-full relative">
@@ -179,7 +179,28 @@ export default function Sidebar({ onNavigate }) {
           </div>
         </div>
 
-        {/* Admin — Folders + Topics */}
+        {/* Folders — all users see Trash, only admin/hod see Permanently Deleted */}
+        <div className="p-3 md:p-4 border-b border-border">
+          <h3 className="text-muted-foreground font-semibold text-xs uppercase tracking-wide mb-3">
+            Folders
+          </h3>
+          <div className="space-y-2">
+            <Item
+              label="Trash"
+              active={active("trash")}
+              onClick={() => go("/trash")}
+            />
+            {canSeePermaDeleted && (
+              <Item
+                label="Permanently Deleted"
+                active={active("permaTrash")}
+                onClick={() => go("/permanently-deleted")}
+              />
+            )}
+          </div>
+        </div>
+
+        {/* Admin only */}
         {isAdmin && (
           <div className="p-3 md:p-4 border-b border-border">
             <h3 className="text-muted-foreground font-semibold text-xs uppercase tracking-wide mb-3">
@@ -190,16 +211,6 @@ export default function Sidebar({ onNavigate }) {
                 label="Topic Management"
                 active={active("topics")}
                 onClick={() => go("/topics")}
-              />
-              <Item
-                label="Trash"
-                active={active("trash")}
-                onClick={() => go("/trash")}
-              />
-              <Item
-                label="Permanently Deleted"
-                active={active("permaTrash")}
-                onClick={() => go("/permanently-deleted")}
               />
             </div>
           </div>

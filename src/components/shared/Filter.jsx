@@ -24,7 +24,7 @@ const ALL_FILTERS = [
   { id: 4, label: "Start Date", type: "date" },
   { id: 5, label: "End Date", type: "date" },
   { id: 6, label: "Ticket ID", type: "text", searchKey: "ticket_id" },
-  { id: 7, label: "Company Name", type: "text", searchKey: "client_company" },
+  { id: 7, label: "Company Name", type: "text", searchKey: "client_companies" },
 ];
 
 export default function Filter({ onFilterChange, userType = "" }) {
