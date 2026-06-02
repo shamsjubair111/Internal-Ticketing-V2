@@ -77,13 +77,20 @@ export default function IssueTicketPage() {
   const [company, setCompany] = useState("");
 
   useEffect(() => {
-    Promise.all([getUserInfo(), getClientList()])
-      .then(([u, c]) => {
+    // Fetch user info first, then conditionally fetch client list
+    getUserInfo()
+      .then((u) => {
         const usr = u.data.data[0];
         setUserData(usr);
         setUserType(usr.user_type);
         setCompanyList(usr.client_companies || []);
-        setClientList(c.data.data || []);
+
+        // Only fetch client list for non-client users
+        if (usr.user_type !== "client") {
+          return getClientList()
+            .then((c) => setClientList(c.data.data || []))
+            .catch(() => {}); // silently ignore if fails
+        }
       })
       .catch(() => {})
       .finally(() => setLoading(false));
@@ -179,7 +186,7 @@ export default function IssueTicketPage() {
       attachments,
       secondary_emails: useSecEmail ? newSecEmails : "",
       use_secondary_email: useSecEmail,
-      department_name: team,
+      department: team,
       department_email: sendMailTo,
       issuer_user_type: userType,
       issuer_id: userData.user_id || userData.customer_id,
@@ -197,7 +204,7 @@ export default function IssueTicketPage() {
       client_mobile: isClient ? userData.mobile : newMobile,
       client_company: isClient ? company : newCompany,
       client_company_id: companyId,
-      service,
+      service_type: service,
       priority,
     })
       .then(() => {
@@ -428,7 +435,7 @@ export default function IssueTicketPage() {
               key={fileKey}
               accept="image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.zip,.csv"
               onChange={(e) => setSelectedFiles(Array.from(e.target.files))}
-              className="text-sm text-gray-500"
+              className="text-sm text-gray-500 cursor-pointer"
             />
           </div>
         </div>
@@ -436,7 +443,7 @@ export default function IssueTicketPage() {
         <div className="flex justify-between mt-8">
           <button
             onClick={() => router.push("/my-tickets")}
-            className="px-5 py-2 text-sm text-gray-600 bg-gray-100 rounded hover:bg-gray-200"
+            className="cursor-pointer px-5 py-2 text-sm text-gray-600 bg-gray-100 rounded hover:bg-gray-200"
           >
             Back
           </button>

@@ -1,15 +1,6 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Plus, X } from "lucide-react";
-
-function useDebounce(value, delay) {
-  const [debounced, setDebounced] = useState(value);
-  useEffect(() => {
-    const t = setTimeout(() => setDebounced(value), delay);
-    return () => clearTimeout(t);
-  }, [value, delay]);
-  return debounced;
-}
 
 const ALL_FILTERS = [
   {
@@ -34,25 +25,18 @@ const ALL_FILTERS = [
   { id: 5, label: "End Date", type: "date" },
   { id: 6, label: "Ticket ID", type: "text", searchKey: "ticket_id" },
   { id: 7, label: "Company Name", type: "text", searchKey: "client_company" },
-  {
-    id: 8,
-    label: "Service",
-    type: "select",
-    options: ["Internet", "Cloud", "IpTelephony", "SMS"],
-    searchKey: "service_type",
-  },
 ];
 
 export default function Filter({ onFilterChange, userType = "" }) {
   const [isOpen, setIsOpen] = useState(false);
   const [selected, setSelected] = useState([]);
-  const debounced = useDebounce(selected, 500);
+  const internalUpdate = useRef(false);
 
-  // Hide Company Name for clients
   const visibleFilters = ALL_FILTERS.filter(
     (f) => !(f.id === 7 && userType === "client"),
   );
 
+  // Load from localStorage on mount only
   useEffect(() => {
     const saved = localStorage.getItem("ticket_filters");
     if (saved) {
@@ -65,20 +49,29 @@ export default function Filter({ onFilterChange, userType = "" }) {
     }
   }, []);
 
+  // Listen for storage events from OTHER tabs only (e.g. logo click clearing filters)
   useEffect(() => {
-    const handler = () => {
-      const saved = localStorage.getItem("ticket_filters");
-      setSelected(saved ? JSON.parse(saved) : []);
+    const handler = (e) => {
+      if (e.key === "ticket_filters") {
+        if (internalUpdate.current) return; // ignore our own writes
+        const saved = localStorage.getItem("ticket_filters");
+        setSelected(saved ? JSON.parse(saved) : []);
+      }
     };
     window.addEventListener("storage", handler);
     return () => window.removeEventListener("storage", handler);
   }, []);
 
+  // Notify parent and save to localStorage when selected changes
   useEffect(() => {
-    onFilterChange?.(debounced);
-    if (debounced.length > 0)
-      localStorage.setItem("ticket_filters", JSON.stringify(debounced));
-  }, [debounced]);
+    internalUpdate.current = true;
+    onFilterChange?.(selected);
+    localStorage.setItem("ticket_filters", JSON.stringify(selected));
+    // Reset flag after a tick
+    setTimeout(() => {
+      internalUpdate.current = false;
+    }, 0);
+  }, [selected]);
 
   const add = (opt) => {
     if (selected.some((f) => f.id === opt.id)) return;
@@ -89,13 +82,7 @@ export default function Filter({ onFilterChange, userType = "" }) {
   const change = (id, value) =>
     setSelected((p) => p.map((f) => (f.id === id ? { ...f, value } : f)));
 
-  const remove = (id) => {
-    setSelected((p) => {
-      const updated = p.filter((f) => f.id !== id);
-      localStorage.setItem("ticket_filters", JSON.stringify(updated));
-      return updated;
-    });
-  };
+  const remove = (id) => setSelected((p) => p.filter((f) => f.id !== id));
 
   return (
     <div className="w-full bg-white rounded-sm border border-gray-200">
@@ -103,7 +90,7 @@ export default function Filter({ onFilterChange, userType = "" }) {
         <div className="relative">
           <button
             onClick={() => setIsOpen((p) => !p)}
-            className="flex items-center gap-2 px-3 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50"
+            className="flex items-center gap-2 px-3 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50 cursor-pointer"
           >
             <Plus className="w-4 h-4" /> Add filter
           </button>
@@ -114,7 +101,7 @@ export default function Filter({ onFilterChange, userType = "" }) {
                   key={opt.id}
                   onClick={() => add(opt)}
                   disabled={selected.some((f) => f.id === opt.id)}
-                  className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed"
+                  className="w-full cursor-pointer text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   {opt.label}
                 </button>
@@ -138,7 +125,7 @@ export default function Filter({ onFilterChange, userType = "" }) {
                   <select
                     value={f.value}
                     onChange={(e) => change(f.id, e.target.value)}
-                    className="border border-gray-300 rounded-md px-2 py-1 text-sm"
+                    className="border border-gray-300 rounded-md px-2 py-1 text-sm cursor-pointer"
                   >
                     <option value="">Select</option>
                     {f.options.map((o) => (
@@ -154,7 +141,7 @@ export default function Filter({ onFilterChange, userType = "" }) {
                     type="date"
                     value={f.value}
                     onChange={(e) => change(f.id, e.target.value)}
-                    className="border border-gray-300 rounded-md px-2 py-1 text-sm"
+                    className="border border-gray-300 rounded-md px-2 py-1 text-sm cursor-pointer"
                   />
                 )}
 
@@ -170,7 +157,7 @@ export default function Filter({ onFilterChange, userType = "" }) {
 
                 <button
                   onClick={() => remove(f.id)}
-                  className="text-gray-400 hover:text-red-500"
+                  className="cursor-pointer text-gray-400 hover:text-red-500"
                 >
                   <X className="w-4 h-4" />
                 </button>
